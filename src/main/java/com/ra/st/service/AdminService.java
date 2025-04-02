@@ -2,6 +2,7 @@ package com.ra.st.service;
 
 import com.ra.st.model.dto.*;
 import com.ra.st.model.entity.Order;
+import com.ra.st.model.entity.Product;
 import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
 
@@ -26,12 +27,12 @@ public interface AdminService {
     ResponseEntity<?> createProduct(ProductRequestDTO productRequest);
     ResponseEntity<?> updateProduct(Long productId, ProductRequestDTO productRequest);
     ResponseEntity<?> deleteProduct(Long productId);
+    ResponseEntity<?> searchProducts(String keyword, int page, int size);
 
     Page<OrderResponseDTO> getAllOrders(int page, int size, String sortBy, String order);
     Page<OrderResponseDTO> getOrdersByStatus(Order.OrderStatus orderStatus, int page, int size);
     OrderResponseDTO getOrderById(Long orderId);
-    ResponseEntity<?> updateOrderStatus(Long orderId, Order.OrderStatus orderStatus);
-
+    OrderResponseDTO updateOrderStatus(Long orderId, Order.OrderStatus orderStatus);
     ResponseEntity<ReportResponseDTO> getSalesRevenueOverTime(ReportRequestDTO request);
     ResponseEntity<ReportResponseDTO> getBestSellerProducts();
     ResponseEntity<ReportResponseDTO> getMostLikedProducts();

@@ -19,9 +19,6 @@ public class Product {
     @Column(name = "product_id", nullable = false, updatable = false)
     private Long id;
 
-    @Column(name = "sku", nullable = false, length = 100, unique = true)
-    private String sku;
-
     @Column(name = "product_name", nullable = false, length = 100, unique = true)
     private String productName;
 
@@ -36,9 +33,6 @@ public class Product {
 
     @Column(name = "image", length = 255)
     private String image;
-
-    @Column(name = "sold_quantity", nullable = false, columnDefinition = "INT DEFAULT 0")
-    private Integer soldQuantity;
 
     @Column(name = "featured", nullable = false)
     private Boolean featured;
@@ -61,14 +55,10 @@ public class Product {
         if (featured == null) {
             featured = false;
         }
-        if (soldQuantity == null) {
-            soldQuantity = 0;
-        }
     }
 
     @PreUpdate
     protected void onUpdate() {
         updatedAt = new Date();
-        this.featured = (this.soldQuantity >= 100);
     }
 }

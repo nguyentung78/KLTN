@@ -1,5 +1,7 @@
 package com.ra.st.model.dto;
-import com.ra.st.model.entity.Order.OrderStatus;
+
+import com.ra.st.model.entity.Order;
+import jakarta.validation.constraints.NotNull;
 import lombok.*;
 
 @Getter
@@ -7,5 +9,6 @@ import lombok.*;
 @NoArgsConstructor
 @AllArgsConstructor
 public class OrderRequestDTO {
-    private OrderStatus orderStatus;
+    @NotNull(message = "Trạng thái đơn hàng không được để trống")
+    private Order.OrderStatus orderStatus;
 }

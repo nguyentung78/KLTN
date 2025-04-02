@@ -17,10 +17,9 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
     // ✅ Lấy danh sách đơn hàng của người dùng
     List<Order> findByUser(Users user);
-
+    List<Order> findByStatus(Order.OrderStatus status);
     // ✅ Tìm đơn hàng theo số serial
-    Optional<Order> findBySerialNumber(String serialNumber);
-
+    Optional<Order> findBySerialNumberAndUser(String serialNumber, Users user);
     // ✅ Lấy danh sách đơn hàng của một người dùng theo trạng thái
     List<Order> findByUserAndStatus(Users user, Order.OrderStatus status);
 }

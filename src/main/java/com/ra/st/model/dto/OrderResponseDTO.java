@@ -5,6 +5,7 @@ import lombok.*;
 
 import java.math.BigDecimal;
 import java.util.Date;
+import java.util.List;
 
 @AllArgsConstructor
 @NoArgsConstructor
@@ -22,4 +23,5 @@ public class OrderResponseDTO {
     private String receivePhone;
     private Date createdAt;
     private Date receivedAt;
+    private List<OrderItemDTO> items;
 }

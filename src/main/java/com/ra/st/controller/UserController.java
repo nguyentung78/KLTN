@@ -2,6 +2,7 @@ package com.ra.st.controller;
 
 import com.ra.st.model.dto.*;
 import com.ra.st.service.UserService;
+import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -27,7 +28,7 @@ public class UserController {
 
     // Thêm sản phẩm vào giỏ hàng
     @PostMapping("/cart/add")
-    public ResponseEntity<?> addToCart(@RequestBody CartItemRequestDTO request) {
+    public ResponseEntity<?> addToCart(@Valid @RequestBody CartItemRequestDTO request) {
         return userService.addToCart(request);
     }
 

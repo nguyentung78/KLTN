@@ -3,6 +3,9 @@ package com.ra.st.service;
 import com.ra.st.model.dto.*;
 import com.ra.st.model.entity.*;
 import com.ra.st.repository.*;
+import jakarta.transaction.Transactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -14,15 +17,15 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
-import java.time.YearMonth;
 import java.util.Date;
 import java.util.List;
 import java.util.Set;
-import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
 public class AdminServiceImp implements AdminService {
+    private static final Logger logger = LoggerFactory.getLogger(AdminServiceImp.class);
+
     @Autowired
     private UserRepository userRepository;
 
@@ -43,6 +46,10 @@ public class AdminServiceImp implements AdminService {
 
     @Autowired
     private ReportRepository reportRepository;
+
+    @Autowired
+    private OrderDetailRepository orderDetailRepository;
+
     //=======================USER=========================
     @Override
     public Page<UserResponseDTO> getAllUsers(int page, int size, String sortBy, String order) {
@@ -63,7 +70,6 @@ public class AdminServiceImp implements AdminService {
         ));
     }
 
-    // Tìm kiếm người dùng theo username
     @Override
     public Page<UserResponseDTO> searchUsers(String username, int page, int size) {
         Pageable pageable = PageRequest.of(page, size);
@@ -82,8 +88,6 @@ public class AdminServiceImp implements AdminService {
         ));
     }
 
-
-    // Xóa quyền của người dùng
     @Override
     public ResponseEntity<?> removeUserRoles(Long userId, RoleRequestDTO roleRequest) {
         Users user = userRepository.findById(userId)
@@ -107,8 +111,6 @@ public class AdminServiceImp implements AdminService {
         return ResponseEntity.ok("Xóa quyền thành công cho user: " + user.getUsername());
     }
 
-
-    // Khóa / Mở khóa tài khoản
     @Override
     public ResponseEntity<?> toggleUserStatus(Long userId) {
         Users user = userRepository.findById(userId)
@@ -119,6 +121,7 @@ public class AdminServiceImp implements AdminService {
 
         return ResponseEntity.ok("Tài khoản của " + user.getUsername() + " đã " + (user.isStatus() ? "mở khóa" : "bị khóa"));
     }
+
     @Override
     public ResponseEntity<?> updateUserRoles(Long userId, RoleRequestDTO roleRequest) {
         Users user = userRepository.findById(userId)
@@ -140,7 +143,6 @@ public class AdminServiceImp implements AdminService {
     }
 
     //=======================ROLE=========================
-
     @Override
     public ResponseEntity<?> getAllRoles() {
         List<RoleResponseDTO> roles = roleRepository.findAll().stream()
@@ -158,7 +160,7 @@ public class AdminServiceImp implements AdminService {
         Page<Category> categories = categoryRepository.findAll(pageable);
 
         Page<CategoryResponseDTO> categoryResponse = categories.map(category ->
-                new CategoryResponseDTO(category.getId(), category.getCategoryName(), category.getDescription(), category.getStatus()));
+                new CategoryResponseDTO(category.getCategoryId(), category.getCategoryName(), category.getDescription(), category.getStatus()));
 
         return ResponseEntity.ok(categoryResponse);
     }
@@ -167,27 +169,34 @@ public class AdminServiceImp implements AdminService {
     public ResponseEntity<?> getCategoryById(Long categoryId) {
         Category category = categoryRepository.findById(categoryId)
                 .orElseThrow(() -> new RuntimeException("Danh mục không tồn tại!"));
-        return ResponseEntity.ok(new CategoryResponseDTO(category.getId(), category.getCategoryName(), category.getDescription(), category.getStatus()));
+        return ResponseEntity.ok(new CategoryResponseDTO(category.getCategoryId(), category.getCategoryName(), category.getDescription(), category.getStatus()));
     }
 
     @Override
     public ResponseEntity<?> createCategory(CategoryRequestDTO categoryRequest) {
         if (categoryRepository.existsByCategoryName(categoryRequest.getCategoryName())) {
-            return ResponseEntity.badRequest().body("Danh mục đã tồn tại!");
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(new ErrorResponse("Danh mục đã tồn tại!"));
         }
 
         Category newCategory = new Category();
         newCategory.setCategoryName(categoryRequest.getCategoryName());
         newCategory.setDescription(categoryRequest.getDescription());
+        newCategory.setStatus(true);
 
         categoryRepository.save(newCategory);
-        return ResponseEntity.ok("Thêm danh mục thành công!");
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(new SuccessResponse("Thêm danh mục thành công!"));
     }
 
     @Override
     public ResponseEntity<?> updateCategory(Long categoryId, CategoryRequestDTO categoryRequest) {
         Category category = categoryRepository.findById(categoryId)
                 .orElseThrow(() -> new RuntimeException("Danh mục không tồn tại!"));
+        if (categoryRepository.existsByCategoryNameAndCategoryIdNot(categoryRequest.getCategoryName(), categoryId)) {
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(new ErrorResponse("Tên danh mục đã tồn tại. Vui lòng chọn tên khác!"));
+        }
 
         if (categoryRequest.getCategoryName() != null && !categoryRequest.getCategoryName().trim().isEmpty()) {
             category.setCategoryName(categoryRequest.getCategoryName());
@@ -202,17 +211,21 @@ public class AdminServiceImp implements AdminService {
         }
 
         categoryRepository.save(category);
-        return ResponseEntity.ok("Cập nhật danh mục thành công!");
+        return ResponseEntity.ok(new SuccessResponse("Cập nhật danh mục thành công!"));
     }
-
 
     @Override
     public ResponseEntity<?> deleteCategory(Long categoryId) {
         Category category = categoryRepository.findById(categoryId)
                 .orElseThrow(() -> new RuntimeException("Danh mục không tồn tại!"));
 
+        if (productRepository.existsByCategoryCategoryId(categoryId)) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .body(new ErrorResponse("Không thể xóa danh mục vì vẫn còn sản phẩm liên quan!"));
+        }
+
         categoryRepository.delete(category);
-        return ResponseEntity.ok("Xóa danh mục thành công!");
+        return ResponseEntity.ok(new SuccessResponse("Xóa danh mục thành công!"));
     }
 
     @Override
@@ -221,63 +234,138 @@ public class AdminServiceImp implements AdminService {
         Page<Category> categories;
 
         if (keyword == null || keyword.trim().isEmpty()) {
-            categories = categoryRepository.findAll(pageable); // Nếu không có keyword, trả về tất cả danh mục
+            categories = categoryRepository.findAll(pageable);
         } else {
             categories = categoryRepository.findByCategoryNameContainingIgnoreCase(keyword, pageable);
         }
 
         Page<CategoryResponseDTO> response = categories.map(category ->
-                new CategoryResponseDTO(category.getId(), category.getCategoryName(), category.getDescription(), category.getStatus()));
+                new CategoryResponseDTO(category.getCategoryId(), category.getCategoryName(), category.getDescription(), category.getStatus()));
 
         return ResponseEntity.ok(response);
     }
 
     //=======================PRODUCTS=========================
+    @Override
+    public ResponseEntity<?> searchProducts(String keyword, int page, int size) {
+        Pageable pageable = PageRequest.of(page, size);
+        Page<Product> productPage;
+
+        if (keyword == null || keyword.trim().isEmpty()) {
+            productPage = productRepository.findAll(pageable); // Nếu không có keyword, trả về tất cả
+        } else {
+            productPage = productRepository.findByProductNameContainingIgnoreCase(keyword, pageable);
+        }
+
+        // Chuyển đổi Page<Product> sang Page<ProductResponseDTO> để tránh vòng lặp
+        Page<ProductResponseDTO> productDTOs = productPage.map(product -> {
+            ProductResponseDTO dto = new ProductResponseDTO();
+            dto.setId(product.getId());
+            dto.setProductName(product.getProductName());
+            dto.setDescription(product.getDescription());
+            dto.setUnitPrice(product.getUnitPrice());
+            dto.setStockQuantity(product.getStockQuantity());
+            dto.setImage(product.getImage());
+            // Thêm thông tin category
+            if (product.getCategory() != null) {
+                CategoryResponseDTO categoryDTO = new CategoryResponseDTO();
+                categoryDTO.setCategoryId(product.getCategory().getCategoryId());
+                categoryDTO.setCategoryName(product.getCategory().getCategoryName());
+                categoryDTO.setDescription(product.getCategory().getDescription());
+                categoryDTO.setStatus(product.getCategory().getStatus());
+                dto.setCategory(categoryDTO);
+            }
+            dto.setFeatured(product.getFeatured());
+            return dto;
+        });
+
+        return ResponseEntity.ok(productDTOs);
+    }
 
     @Override
     public ResponseEntity<?> getAllProducts(int page, int size, String sortBy, String order) {
-        Sort.Direction direction = order.equalsIgnoreCase("desc") ? Sort.Direction.DESC : Sort.Direction.ASC;
-        Pageable pageable = PageRequest.of(page, size, Sort.by(direction, sortBy));
+
+
+        Sort sort = order.equalsIgnoreCase("asc") ? Sort.by(sortBy).ascending() : Sort.by(sortBy).descending();
+        Pageable pageable = PageRequest.of(page, size, sort);
         Page<Product> products = productRepository.findAll(pageable);
 
-        Page<ProductResponseDTO> productResponse = products.map(product ->
-                new ProductResponseDTO(product.getId(), product.getProductName(), product.getDescription(),
-                        product.getUnitPrice(), product.getStockQuantity(), product.getImage(),
-                        product.getCategory().getId(), product.getFeatured()));
+        // Chuyển đổi danh sách sản phẩm thành DTO
+        Page<ProductResponseDTO> productDTOs = products.map(product -> {
+            ProductResponseDTO dto = new ProductResponseDTO();
+            dto.setId(product.getId());
+            dto.setProductName(product.getProductName());
+            dto.setDescription(product.getDescription());
+            dto.setUnitPrice(product.getUnitPrice());
+            dto.setStockQuantity(product.getStockQuantity());
+            dto.setImage(product.getImage());
+            // Thêm thông tin category
+            if (product.getCategory() != null) {
+                CategoryResponseDTO categoryDTO = new CategoryResponseDTO();
+                categoryDTO.setCategoryId(product.getCategory().getCategoryId());
+                categoryDTO.setCategoryName(product.getCategory().getCategoryName());
+                categoryDTO.setDescription(product.getCategory().getDescription());
+                categoryDTO.setStatus(product.getCategory().getStatus());
+                dto.setCategory(categoryDTO);
+            }
+            dto.setFeatured(product.getFeatured());
+            return dto;
+        });
 
-        return ResponseEntity.ok(productResponse);
+        return ResponseEntity.ok(productDTOs);
     }
-
 
     @Override
     public ResponseEntity<?> getProductById(Long productId) {
         Product product = productRepository.findById(productId)
                 .orElseThrow(() -> new RuntimeException("Sản phẩm không tồn tại!"));
-        return ResponseEntity.ok(new ProductResponseDTO(
-                product.getId(),
-                product.getProductName(),
-                product.getDescription(),
-                product.getUnitPrice(),
-                product.getStockQuantity(),
-                product.getImage(),
-                product.getCategory().getId(),
-                product.getFeatured()
-        ));
 
+        ProductResponseDTO dto = new ProductResponseDTO();
+        dto.setId(product.getId());
+        dto.setProductName(product.getProductName());
+        dto.setDescription(product.getDescription());
+        dto.setUnitPrice(product.getUnitPrice());
+        dto.setStockQuantity(product.getStockQuantity());
+        dto.setImage(product.getImage());
+
+        // Thêm thông tin category
+        if (product.getCategory() != null) {
+            CategoryResponseDTO categoryDTO = new CategoryResponseDTO();
+            categoryDTO.setCategoryId(product.getCategory().getCategoryId());
+            categoryDTO.setCategoryName(product.getCategory().getCategoryName());
+            categoryDTO.setDescription(product.getCategory().getDescription());
+            categoryDTO.setStatus(product.getCategory().getStatus());
+            dto.setCategory(categoryDTO);
+        }
+
+        dto.setFeatured(product.getFeatured());
+
+        return ResponseEntity.ok(dto);
     }
 
     @Override
     public ResponseEntity<?> createProduct(ProductRequestDTO productRequest) {
+        // Validate thủ công
+        if (productRequest.getProductName() == null || productRequest.getProductName().trim().isEmpty()) {
+            return ResponseEntity.badRequest().body("Tên sản phẩm không được để trống");
+        }
+        if (productRequest.getUnitPrice() == null || productRequest.getUnitPrice().compareTo(BigDecimal.ZERO) <= 0) {
+            return ResponseEntity.badRequest().body("Giá sản phẩm phải lớn hơn 0");
+        }
+        if (productRequest.getStockQuantity() == null || productRequest.getStockQuantity() < 0) {
+            return ResponseEntity.badRequest().body("Số lượng tồn kho phải lớn hơn hoặc bằng 0");
+        }
+        if (productRequest.getCategoryId() == null) {
+            return ResponseEntity.badRequest().body("Danh mục không được để trống");
+        }
+
+        // Logic hiện tại...
         if (productRepository.existsByProductName(productRequest.getProductName())) {
             return ResponseEntity.badRequest().body("Sản phẩm đã tồn tại!");
         }
 
         Category category = categoryRepository.findById(productRequest.getCategoryId())
                 .orElseThrow(() -> new RuntimeException("Danh mục không tồn tại!"));
-
-        String sku = (productRequest.getSku() != null && !productRequest.getSku().isEmpty())
-                ? productRequest.getSku()
-                : "SKU-" + UUID.randomUUID().toString().substring(0, 8);
 
         MultipartFile imageFile = productRequest.getImage();
         String imageUrl = "https://res.cloudinary.com/default-product.png"; // Ảnh mặc định
@@ -291,27 +379,24 @@ public class AdminServiceImp implements AdminService {
         }
 
         Product newProduct = new Product();
-        newProduct.setSku(sku);
         newProduct.setProductName(productRequest.getProductName());
         newProduct.setDescription(productRequest.getDescription());
         newProduct.setUnitPrice(productRequest.getUnitPrice());
         newProduct.setStockQuantity(productRequest.getStockQuantity());
         newProduct.setImage(imageUrl);
         newProduct.setCategory(category);
-        newProduct.setFeatured(false);
+        newProduct.setFeatured(productRequest.getFeatured() != null ? productRequest.getFeatured() : false);
 
         productRepository.save(newProduct);
 
         return ResponseEntity.ok("Thêm sản phẩm thành công!");
     }
 
-
     @Override
     public ResponseEntity<?> updateProduct(Long productId, ProductRequestDTO productRequest) {
         Product product = productRepository.findById(productId)
                 .orElseThrow(() -> new RuntimeException("Sản phẩm không tồn tại!"));
 
-        // Cập nhật nếu có giá trị, nếu không giữ nguyên
         if (productRequest.getProductName() != null && !productRequest.getProductName().trim().isEmpty()) {
             product.setProductName(productRequest.getProductName());
         }
@@ -334,7 +419,10 @@ public class AdminServiceImp implements AdminService {
             product.setCategory(category);
         }
 
-        // Nếu có ảnh mới, cập nhật
+        if (productRequest.getFeatured() != null) {
+            product.setFeatured(productRequest.getFeatured());
+        }
+
         if (productRequest.getImage() != null && !productRequest.getImage().isEmpty()) {
             try {
                 String imageUrl = uploadService.uploadFile(productRequest.getImage());
@@ -345,166 +433,306 @@ public class AdminServiceImp implements AdminService {
         }
 
         productRepository.save(product);
-        return ResponseEntity.ok("Cập nhật sản phẩm thành công!");
+        return ResponseEntity.ok("C Updating sản phẩm thành công!");
     }
 
     @Override
+    @Transactional
     public ResponseEntity<?> deleteProduct(Long productId) {
+        // Kiểm tra sản phẩm có tồn tại không
         Product product = productRepository.findById(productId)
                 .orElseThrow(() -> new RuntimeException("Sản phẩm không tồn tại!"));
 
+        // Tìm tất cả các đơn hàng có trạng thái WAITING
+        List<Order> waitingOrders = orderRepository.findByStatus(Order.OrderStatus.WAITING);
+        for (Order order : waitingOrders) {
+            List<OrderDetail> orderDetails = orderDetailRepository.findByOrder(order);
+            boolean containsProduct = orderDetails.stream()
+                    .anyMatch(od -> od.getProductId().equals(productId));
+            if (containsProduct) {
+                // Hủy đơn hàng
+                order.setStatus(Order.OrderStatus.CANCELLED);
+                orderRepository.save(order);
+            }
+        }
+
+        // Xóa sản phẩm
         productRepository.delete(product);
-        return ResponseEntity.ok("Xóa sản phẩm thành công!");
+        return ResponseEntity.ok("Xóa sản phẩm thành công! Các đơn hàng liên quan (nếu có) đã được hủy.");
     }
 
     //=======================ORDERS=========================
-    // Lấy danh sách tất cả đơn hàng (phân trang, sắp xếp)
     @Override
-    public Page<OrderResponseDTO> getAllOrders(int page, int size, String sortBy, String order) {
-        Sort.Direction direction = order.equalsIgnoreCase("desc") ? Sort.Direction.DESC : Sort.Direction.ASC;
-        Pageable pageable = PageRequest.of(page, size, Sort.by(direction, sortBy));
+    public Page<OrderResponseDTO> getAllOrders(int page, int size, String direction, String sortBy) {
+        // Xác định hướng sắp xếp
+        Sort.Direction sortDirection = direction.equalsIgnoreCase("desc") ? Sort.Direction.DESC : Sort.Direction.ASC;
+        Sort sort = Sort.by(sortDirection, sortBy);
+
+        // Tạo Pageable để phân trang
+        Pageable pageable = PageRequest.of(page, size, sort);
+
+        // Lấy danh sách đơn hàng từ repository
         Page<Order> orders = orderRepository.findAll(pageable);
 
-        return orders.map(or -> new OrderResponseDTO(
-                or.getId(),
-                or.getSerialNumber(),
-                or.getUser().getUsername(),
-                or.getTotalPrice(),
-                or.getStatus(),
-                or.getReceiveName(),
-                or.getReceiveAddress(),
-                or.getReceivePhone(),
-                or.getCreatedAt(),
-                or.getReceivedAt()
-        ));
+        // Chuyển đổi sang OrderResponseDTO
+        return orders.map(order -> OrderResponseDTO.builder()
+                .id(order.getId())
+                .serialNumber(order.getSerialNumber())
+                .username(order.getUser().getUsername())
+                .totalPrice(order.getTotalPrice())
+                .status(order.getStatus())
+                .receiveName(order.getReceiveName())
+                .receiveAddress(order.getReceiveAddress())
+                .receivePhone(order.getReceivePhone())
+                .createdAt(order.getCreatedAt())
+                .receivedAt(order.getReceivedAt())
+                .build());
     }
 
-    // Lấy danh sách đơn hàng theo trạng thái
     @Override
     public Page<OrderResponseDTO> getOrdersByStatus(Order.OrderStatus orderStatus, int page, int size) {
-        Pageable pageable = PageRequest.of(page, size);
+        // Tạo Pageable để phân trang (mặc định sắp xếp theo createdAt giảm dần)
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
+
+        // Lấy danh sách đơn hàng theo trạng thái
         Page<Order> orders = orderRepository.findByStatus(orderStatus, pageable);
 
-        return orders.map(or -> new OrderResponseDTO(
-                or.getId(),
-                or.getSerialNumber(),
-                or.getUser().getUsername(),
-                or.getTotalPrice(),
-                or.getStatus(),
-                or.getReceiveName(),
-                or.getReceiveAddress(),
-                or.getReceivePhone(),
-                or.getCreatedAt(),
-                or.getReceivedAt()
-        ));
+        // Chuyển đổi sang OrderResponseDTO
+        return orders.map(order -> OrderResponseDTO.builder()
+                .id(order.getId())
+                .serialNumber(order.getSerialNumber())
+                .username(order.getUser().getUsername())
+                .totalPrice(order.getTotalPrice())
+                .status(order.getStatus())
+                .receiveName(order.getReceiveName())
+                .receiveAddress(order.getReceiveAddress())
+                .receivePhone(order.getReceivePhone())
+                .createdAt(order.getCreatedAt())
+                .receivedAt(order.getReceivedAt())
+                .build());
     }
 
-    // Lấy chi tiết đơn hàng theo ID
     @Override
     public OrderResponseDTO getOrderById(Long orderId) {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new RuntimeException("Đơn hàng không tồn tại!"));
 
-        return new OrderResponseDTO(
-                order.getId(),
-                order.getSerialNumber(),
-                order.getUser().getUsername(),
-                order.getTotalPrice(),
-                order.getStatus(),
-                order.getReceiveName(),
-                order.getReceiveAddress(),
-                order.getReceivePhone(),
-                order.getCreatedAt(),
-                order.getReceivedAt()
-        );
+        // Lấy danh sách chi tiết đơn hàng
+        List<OrderDetail> orderDetails = orderDetailRepository.findByOrder(order);
+        List<OrderItemDTO> items = orderDetails.stream()
+                .map(item -> new OrderItemDTO(
+                        item.getProductId(),
+                        item.getName(),
+                        item.getUnitPrice(),
+                        item.getOrderQuantity()
+                ))
+                .collect(Collectors.toList());
+
+        return OrderResponseDTO.builder()
+                .id(order.getId())
+                .serialNumber(order.getSerialNumber())
+                .username(order.getUser().getUsername())
+                .totalPrice(order.getTotalPrice())
+                .status(order.getStatus())
+                .receiveName(order.getReceiveName())
+                .receiveAddress(order.getReceiveAddress())
+                .receivePhone(order.getReceivePhone())
+                .createdAt(order.getCreatedAt())
+                .receivedAt(order.getReceivedAt())
+                .items(items) // Thêm danh sách sản phẩm
+                .build();
     }
 
-    // Cập nhật trạng thái đơn hàng
     @Override
-    public ResponseEntity<?> updateOrderStatus(Long orderId, Order.OrderStatus orderStatus) {
+    public OrderResponseDTO updateOrderStatus(Long orderId, Order.OrderStatus orderStatus) {
+        // Tìm đơn hàng theo ID
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new RuntimeException("Đơn hàng không tồn tại!"));
 
+        // Kiểm tra trạng thái hợp lệ
+        if (orderStatus == null) {
+            throw new IllegalArgumentException("Trạng thái đơn hàng không được để trống!");
+        }
+
+        // Nếu chuyển sang DELIVERED, cập nhật ngày nhận hàng
+        if (orderStatus == Order.OrderStatus.DELIVERED && order.getStatus() != Order.OrderStatus.DELIVERED) {
+            order.setReceivedAt(new Date());
+        }
+
+        // Nếu hủy đơn hàng (CANCELLED), kiểm tra trạng thái hiện tại
+        if (orderStatus == Order.OrderStatus.CANCELLED && order.getStatus() != Order.OrderStatus.WAITING) {
+            throw new IllegalStateException("Chỉ có thể hủy đơn hàng ở trạng thái WAITING!");
+        }
+
+        // Cập nhật trạng thái
         order.setStatus(orderStatus);
         orderRepository.save(order);
 
-        return ResponseEntity.ok("Cập nhật trạng thái đơn hàng thành công!");
+        // Trả về DTO
+        return OrderResponseDTO.builder()
+                .id(order.getId())
+                .serialNumber(order.getSerialNumber())
+                .username(order.getUser().getUsername())
+                .totalPrice(order.getTotalPrice())
+                .status(order.getStatus())
+                .receiveName(order.getReceiveName())
+                .receiveAddress(order.getReceiveAddress())
+                .receivePhone(order.getReceivePhone())
+                .createdAt(order.getCreatedAt())
+                .receivedAt(order.getReceivedAt())
+                .build();
     }
-
     // ====================== REPORTS & STATISTICS ======================
-    // Doanh thu bán hàng theo thời gian
     @Override
     public ResponseEntity<ReportResponseDTO> getSalesRevenueOverTime(ReportRequestDTO request) {
-        BigDecimal totalRevenue = reportRepository.getSalesRevenueOverTime(request.getFromDate(), request.getToDate());
-        Long totalOrders = reportRepository.getTotalOrdersOverTime(request.getFromDate(), request.getToDate());
+        try {
+            // Lấy dữ liệu doanh thu theo ngày
+            List<Object[]> revenueData = reportRepository.getSalesRevenueOverTimeByDay(
+                    request.getFromDate(), request.getToDate()
+            );
 
-        return ResponseEntity.ok(
-                ReportResponseDTO.builder()
-                        .totalRevenue(totalRevenue != null ? totalRevenue : BigDecimal.ZERO)
-                        .totalOrders(totalOrders != null ? totalOrders.intValue() : 0)
-                        .build()
-        );
+            // Chuyển đổi dữ liệu thành danh sách TimeSeriesDTO
+            List<TimeSeriesDTO> timeSeriesData = revenueData.stream()
+                    .map(result -> new TimeSeriesDTO(
+                            ((java.sql.Date) result[0]).toString(), // Ngày
+                            result[1] instanceof BigDecimal
+                                    ? (BigDecimal) result[1]
+                                    : BigDecimal.valueOf(((Number) result[1]).doubleValue()) // Giữ nguyên BigDecimal hoặc chuyển đổi từ Number
+                    ))
+                    .collect(Collectors.toList());
+
+            // Tính tổng doanh thu
+            BigDecimal totalRevenue = timeSeriesData.stream()
+                    .map(TimeSeriesDTO::getValue)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+            // Trả về ResponseEntity chứa ReportResponseDTO
+            ReportResponseDTO response = ReportResponseDTO.builder()
+                    .totalRevenue(totalRevenue) // Đảm bảo ReportResponseDTO có trường totalRevenue kiểu BigDecimal
+                    .timeSeriesData(timeSeriesData)
+                    .build();
+
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            // Xử lý lỗi nếu có
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(null);
+        }
     }
 
-    // Sản phẩm bán chạy nhất
     @Override
     public ResponseEntity<ReportResponseDTO> getBestSellerProducts() {
-        List<String> topProducts = reportRepository.getBestSellerProducts();
-        return ResponseEntity.ok(ReportResponseDTO.builder().topItems(topProducts).build());
+        Pageable pageable = PageRequest.of(0, 10);
+        List<Object[]> topProducts = reportRepository.getBestSellerProducts(pageable);
+        List<TopItemDTO> topItems = topProducts.stream()
+                .map(result -> new TopItemDTO(
+                        (String) result[1], // productName
+                        BigDecimal.valueOf(((Number) result[2]).longValue()) // totalSold
+                ))
+                .collect(Collectors.toList());
+        return ResponseEntity.ok(ReportResponseDTO.builder().topItems(topItems).build());
     }
 
-    // Sản phẩm yêu thích nhất
     @Override
     public ResponseEntity<ReportResponseDTO> getMostLikedProducts() {
-        List<String> mostLikedProducts = reportRepository.getMostLikedProducts();
-        return ResponseEntity.ok(ReportResponseDTO.builder().topItems(mostLikedProducts).build());
+        Pageable pageable = PageRequest.of(0, 10);
+        List<Object[]> mostLikedProducts = reportRepository.getMostLikedProducts(pageable);
+        List<TopItemDTO> topItems = mostLikedProducts.stream()
+                .map(result -> new TopItemDTO(
+                        (String) result[0], // productName
+                        BigDecimal.valueOf(((Number) result[1]).longValue()) // likeCount
+                ))
+                .collect(Collectors.toList());
+        return ResponseEntity.ok(ReportResponseDTO.builder().topItems(topItems).build());
     }
 
-    // Doanh thu theo danh mục
     @Override
     public ResponseEntity<?> getRevenueByCategory() {
-        return ResponseEntity.ok(reportRepository.getRevenueByCategory());
+        List<Object[]> revenueByCategory = reportRepository.getRevenueByCategory();
+        List<TopItemDTO> topItems = revenueByCategory.stream()
+                .map(result -> new TopItemDTO(
+                        (String) result[0], // categoryName
+                        (BigDecimal) result[1] // totalRevenue
+                ))
+                .collect(Collectors.toList());
+        return ResponseEntity.ok(ReportResponseDTO.builder().topItems(topItems).build());
     }
 
-    // Khách hàng chi tiêu nhiều nhất
     @Override
     public ResponseEntity<ReportResponseDTO> getTopSpendingCustomers() {
-        List<Object[]> topCustomers = reportRepository.getTopSpendingCustomers();
-        List<String> topCustomerNames = topCustomers.stream().map(obj -> (String) obj[0]).collect(Collectors.toList());
-        BigDecimal totalRevenue = topCustomers.stream().map(obj -> (BigDecimal) obj[1]).reduce(BigDecimal.ZERO, BigDecimal::add);
+        Pageable pageable = PageRequest.of(0, 10);
+        List<Object[]> topCustomers = reportRepository.getTopSpendingCustomers(pageable);
+        List<TopItemDTO> topItems = topCustomers.stream()
+                .map(result -> new TopItemDTO(
+                        (String) result[0], // username
+                        (BigDecimal) result[1] // totalSpent
+                ))
+                .collect(Collectors.toList());
+        BigDecimal totalRevenue = topCustomers.stream()
+                .map(result -> (BigDecimal) result[1])
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         return ResponseEntity.ok(
                 ReportResponseDTO.builder()
                         .totalRevenue(totalRevenue)
-                        .topItems(topCustomerNames)
+                        .topItems(topItems)
                         .build()
         );
     }
 
-    // Tài khoản mới trong tháng
     @Override
     public ResponseEntity<ReportResponseDTO> getNewAccountsThisMonth() {
+        Pageable pageable = PageRequest.of(0, 10);
         Long totalNewAccounts = reportRepository.getNewAccountsThisMonth();
-        List<String> newAccountsList = reportRepository.getNewAccountListThisMonth();
+        List<Object[]> newAccountsList = reportRepository.getNewAccountListThisMonth(pageable);
+        List<NewAccountDTO> newAccounts = newAccountsList.stream()
+                .map(result -> new NewAccountDTO(
+                        (String) result[0], // username
+                        (String) result[1], // email
+                        (Date) result[2]    // createdAt
+                ))
+                .collect(Collectors.toList());
 
         return ResponseEntity.ok(
                 ReportResponseDTO.builder()
                         .totalOrders(totalNewAccounts.intValue())
-                        .topItems(newAccountsList)
+                        .newAccounts(newAccounts)
                         .build()
         );
     }
 
-    // Số lượng hóa đơn theo thời gian
     @Override
     public ResponseEntity<ReportResponseDTO> getInvoicesOverTime(ReportRequestDTO request) {
-        Long totalOrders = reportRepository.getTotalOrdersOverTime(request.getFromDate(), request.getToDate());
+        try {
+            // Lấy dữ liệu hóa đơn theo ngày
+            List<Object[]> invoiceData = reportRepository.getInvoicesOverTimeByDay(
+                    request.getFromDate(), request.getToDate()
+            );
 
-        return ResponseEntity.ok(
-                ReportResponseDTO.builder()
-                        .totalOrders(totalOrders.intValue())
-                        .build()
-        );
+            // Chuyển đổi dữ liệu thành danh sách TimeSeriesDTO
+            List<TimeSeriesDTO> timeSeriesData = invoiceData.stream()
+                    .map(result -> new TimeSeriesDTO(
+                            ((java.sql.Date) result[0]).toString(), // Ngày
+                            BigDecimal.valueOf(((Number) result[1]).longValue()) // Số lượng hóa đơn, giữ longValue vì đây là số nguyên
+                    ))
+                    .collect(Collectors.toList());
+
+            // Lấy tổng số đơn hàng
+            Long totalOrders = reportRepository.getTotalOrdersOverTime(
+                    request.getFromDate(), request.getToDate()
+            );
+
+            // Trả về ResponseEntity chứa ReportResponseDTO
+            ReportResponseDTO response = ReportResponseDTO.builder()
+                    .totalOrders(totalOrders != null ? totalOrders.intValue() : 0) // Kiểm tra null và gán mặc định
+                    .timeSeriesData(timeSeriesData)
+                    .build();
+
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            // Xử lý lỗi nếu có
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(null);
+        }
     }
-
 }

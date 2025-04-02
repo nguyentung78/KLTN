@@ -38,9 +38,9 @@ public class SecurityConfig {
                 {
                     CorsConfiguration config = new CorsConfiguration();
                     config.setAllowedOrigins(List.of("http://localhost:5173")); // phụ thuộc vào port clents
-                    config.setAllowedMethods(List.of(""));
+                    config.setAllowedMethods(List.of("*"));
                     config.setAllowCredentials(true);
-                    config.setAllowedHeaders(List.of(""));
+                    config.setAllowedHeaders(List.of("*"));
                     config.setExposedHeaders(List.of("*"));
                     return config;
                 }))
@@ -48,7 +48,7 @@ public class SecurityConfig {
                 .authenticationProvider(authenticationProvider())
                 .authorizeHttpRequests(auth->{
                     auth
-                            .requestMatchers("/api/v1/admin/**").hasAuthority("ADMIN")
+                            .requestMatchers("/api/v1/admin/**").permitAll() //hasAuthority("ADMIN")
                             .requestMatchers("/api/v1/user/**").hasAuthority("USER")
                             .requestMatchers("/api/v1/public/**", "/api/v1/auth/**").permitAll()
                             .anyRequest().authenticated();

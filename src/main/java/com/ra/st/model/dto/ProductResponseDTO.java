@@ -15,6 +15,6 @@ public class ProductResponseDTO {
     private BigDecimal unitPrice;
     private Integer stockQuantity;
     private String image;
-    private Long categoryId;
+    private CategoryResponseDTO category;
     private Boolean featured;
 }

@@ -4,13 +4,12 @@ import com.ra.st.model.dto.*;
 import com.ra.st.model.entity.*;
 import com.ra.st.repository.*;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import jakarta.transaction.Transactional;
-import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
 import java.util.Date;
@@ -39,6 +38,7 @@ public class UserServiceImpl implements UserService {
     private UploadService uploadService;
     @Autowired
     private WishListRepository wishListRepository;
+
     //=======================CART=========================
 
     @Override
@@ -66,10 +66,20 @@ public class UserServiceImpl implements UserService {
             return ResponseEntity.badRequest().body("Số lượng phải lớn hơn 0!");
         }
 
+        // Kiểm tra stockQuantity
+        if (product.getStockQuantity() < request.getQuantity()) {
+            return ResponseEntity.badRequest().body("Sản phẩm " + product.getProductName() + " không đủ hàng! Còn lại: " + product.getStockQuantity());
+        }
+
         ShoppingCart cartItem = shoppingCartRepository.findByUserAndProduct(currentUser, product)
                 .orElse(new ShoppingCart(null, currentUser, product, 0));
 
-        cartItem.setOrderQuantity(cartItem.getOrderQuantity() + request.getQuantity());
+        int newQuantity = cartItem.getOrderQuantity() + request.getQuantity();
+        if (product.getStockQuantity() < newQuantity) {
+            return ResponseEntity.badRequest().body("Sản phẩm " + product.getProductName() + " không đủ hàng! Còn lại: " + product.getStockQuantity());
+        }
+
+        cartItem.setOrderQuantity(newQuantity);
         shoppingCartRepository.save(cartItem);
 
         return ResponseEntity.ok("Thêm sản phẩm vào giỏ hàng thành công!");
@@ -110,34 +120,60 @@ public class UserServiceImpl implements UserService {
         Users currentUser = getCurrentUser();
         List<ShoppingCart> cartItems = shoppingCartRepository.findByUser(currentUser);
 
-        // ✅ Kiểm tra giỏ hàng có rỗng không
         if (cartItems.isEmpty()) {
             return ResponseEntity.badRequest().body("Giỏ hàng trống!");
         }
 
+        // Kiểm tra stockQuantity của từng sản phẩm trong giỏ hàng
+        for (ShoppingCart item : cartItems) {
+            Product product = item.getProduct();
+            if (product.getStockQuantity() < item.getOrderQuantity()) {
+                return ResponseEntity.badRequest()
+                        .body("Sản phẩm " + product.getProductName() + " không đủ hàng! Còn lại: " + product.getStockQuantity());
+            }
+        }
+
         Address selectedAddress = null;
 
-        // ✅ Nếu user nhập địa chỉ trực tiếp, kiểm tra dữ liệu đầu vào
-        if (request.getReceiveAddress() != null && !request.getReceiveAddress().trim().isEmpty()
+        // Trường hợp 1: Người dùng chọn địa chỉ đã lưu (addressId)
+        if (request.getAddressId() != null) {
+            // Lấy địa chỉ từ repository
+            Address address = addressRepository.findById(request.getAddressId())
+                    .orElseThrow(() -> new RuntimeException("Địa chỉ không tồn tại!"));
+
+            // Kiểm tra xem địa chỉ có thuộc về người dùng hiện tại không
+            if (!address.getUser().getId().equals(currentUser.getId())) {
+                return ResponseEntity.badRequest()
+                        .body("Địa chỉ này không tồn tại hoặc không phải của bạn!");
+            }
+            selectedAddress = address;
+        }
+        // Trường hợp 2: Người dùng nhập địa chỉ mới
+        else if (request.getReceiveAddress() != null && !request.getReceiveAddress().trim().isEmpty()
                 && request.getReceivePhone() != null && !request.getReceivePhone().trim().isEmpty()
                 && request.getReceiveName() != null && !request.getReceiveName().trim().isEmpty()) {
-
+            // Kiểm tra định dạng số điện thoại
+            if (!request.getReceivePhone().matches("^\\d{10}$")) {
+                return ResponseEntity.badRequest()
+                        .body("Số điện thoại nhận hàng phải có 10 chữ số!");
+            }
             selectedAddress = new Address(null, currentUser, request.getReceiveAddress(),
                     request.getReceivePhone(), request.getReceiveName());
+            // Lưu địa chỉ mới vào cơ sở dữ liệu (tùy chọn, nếu bạn muốn lưu lại)
+            addressRepository.save(selectedAddress);
         }
-
-        // ✅ Nếu user chọn một địa chỉ từ danh sách
-        else if (request.getAddressId() != null) {
-            selectedAddress = addressRepository.findById(request.getAddressId())
-                    .orElseThrow(() -> new RuntimeException("Địa chỉ không tồn tại!"));
-        }
-
-        // ✅ Nếu user không nhập địa chỉ và không chọn địa chỉ, báo lỗi
+        // Kiểm tra xem người dùng có chọn địa chỉ hay không
         if (selectedAddress == null) {
-            return ResponseEntity.badRequest().body("Vui lòng nhập địa chỉ hoặc chọn địa chỉ giao hàng!");
+            List<Address> userAddresses = addressRepository.findByUser(currentUser);
+            if (userAddresses.isEmpty()) {
+                return ResponseEntity.badRequest()
+                        .body("Người dùng chưa có địa chỉ giao hàng, vui lòng thêm địa chỉ giao hàng!");
+            }
+            return ResponseEntity.badRequest()
+                    .body("Vui lòng chọn địa chỉ giao hàng!");
         }
 
-        // ✅ Tạo đơn hàng mới
+        // Tạo đơn hàng mới
         Order newOrder = new Order();
         newOrder.setUser(currentUser);
         newOrder.setSerialNumber(UUID.randomUUID().toString());
@@ -146,30 +182,32 @@ public class UserServiceImpl implements UserService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add));
         newOrder.setStatus(Order.OrderStatus.WAITING);
         newOrder.setCreatedAt(new Date());
-
-        // ✅ Lưu thông tin địa chỉ giao hàng vào đơn hàng
         newOrder.setReceiveAddress(selectedAddress.getFullAddress());
         newOrder.setReceivePhone(selectedAddress.getPhone());
         newOrder.setReceiveName(selectedAddress.getReceiveName());
+        newOrder.setNote(request.getNote() != null ? request.getNote() : ""); // Gán note, mặc định là chuỗi rỗng nếu null
 
         orderRepository.save(newOrder);
 
-        // ✅ Lưu chi tiết đơn hàng
+        // Lưu chi tiết đơn hàng và giảm stockQuantity
         for (ShoppingCart item : cartItems) {
-            OrderDetailKey orderDetailKey = new OrderDetailKey(newOrder.getId(), item.getProduct().getId());
+            Product product = item.getProduct();
+            OrderDetailKey orderDetailKey = new OrderDetailKey(newOrder.getId(), product.getId());
 
             OrderDetail orderDetail = new OrderDetail();
             orderDetail.setId(orderDetailKey);
             orderDetail.setOrder(newOrder);
-            orderDetail.setProduct(item.getProduct());
             orderDetail.setOrderQuantity(item.getOrderQuantity());
-            orderDetail.setUnitPrice(item.getProduct().getUnitPrice());
-            orderDetail.setName(item.getProduct().getProductName());
+            orderDetail.setUnitPrice(product.getUnitPrice());
+            orderDetail.setName(product.getProductName());
 
             orderDetailRepository.save(orderDetail);
+
+            // Giảm stockQuantity
+            product.setStockQuantity(product.getStockQuantity() - item.getOrderQuantity());
+            productRepository.save(product);
         }
 
-        // ✅ Xóa giỏ hàng sau khi đặt hàng
         shoppingCartRepository.deleteByUser(currentUser);
 
         return ResponseEntity.ok("Đặt hàng thành công!");
@@ -178,8 +216,12 @@ public class UserServiceImpl implements UserService {
     //=======================ACCOUNT=========================
 
     private Users getCurrentUser() {
-        return userRepository.findUserByUsername(
-                SecurityContextHolder.getContext().getAuthentication().getName());
+        String username = SecurityContextHolder.getContext().getAuthentication().getName();
+        Users user = userRepository.findUserByUsername(username);
+        if (user == null) {
+            throw new RuntimeException("Người dùng không tồn tại!");
+        }
+        return user;
     }
 
     @Override
@@ -195,7 +237,18 @@ public class UserServiceImpl implements UserService {
     public ResponseEntity<?> updateUserProfile(UserProfileUpdateDTO request) {
         Users user = getCurrentUser();
         boolean isUpdated = false; // Kiểm tra xem có gì được cập nhật không
-
+        if (request.getEmail() != null && !request.getEmail().matches("^[\\w-\\.]+@([\\w-]+\\.)+[\\w-]{2,4}$")) {
+            return ResponseEntity.badRequest().body("Email không hợp lệ");
+        }
+        if (request.getPhone() != null && !request.getPhone().trim().isEmpty()) {
+            if (!request.getPhone().matches("^\\d{10}$")) {
+                throw new RuntimeException("Số điện thoại phải có 10 chữ số!");
+            }
+            if (userRepository.existsByPhone(request.getPhone()) && !request.getPhone().equals(user.getPhone())) {
+                throw new RuntimeException("Số điện thoại đã tồn tại!");
+            }
+            user.setPhone(request.getPhone());
+        }
         if (request.getUsername() != null && !request.getUsername().trim().isEmpty()) {
             if (userRepository.findUserByUsername(request.getUsername()) != null) {
                 return ResponseEntity.badRequest().body("Username đã tồn tại!");
@@ -227,7 +280,6 @@ public class UserServiceImpl implements UserService {
             isUpdated = true;
         }
 
-        // ✅ Nếu có avatar, upload lên Cloudinary
         if (request.getAvatar() != null && !request.getAvatar().isEmpty()) {
             String imageUrl = uploadService.uploadFile(request.getAvatar());
             user.setAvatar(imageUrl);
@@ -263,7 +315,6 @@ public class UserServiceImpl implements UserService {
     public ResponseEntity<?> addAddress(AddressDTO request) {
         Users user = getCurrentUser();
 
-        // ✅ Kiểm tra nếu thiếu trường dữ liệu nào thì báo lỗi chi tiết
         if (request.getFullAddress() == null || request.getFullAddress().trim().isEmpty()) {
             return ResponseEntity.badRequest().body("Vui lòng nhập địa chỉ đầy đủ!");
         }
@@ -279,17 +330,22 @@ public class UserServiceImpl implements UserService {
         return ResponseEntity.ok("Thêm địa chỉ thành công!");
     }
 
-
     @Override
     public ResponseEntity<?> deleteAddress(Long addressId) {
+        Address address = addressRepository.findById(addressId)
+                .orElseThrow(() -> new RuntimeException("Địa chỉ không tồn tại!"));
+        Users currentUser = getCurrentUser();
+        if (!address.getUser().getId().equals(currentUser.getId())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Bạn không có quyền xóa địa chỉ này!");
+        }
         addressRepository.deleteById(addressId);
         return ResponseEntity.ok("Xóa địa chỉ thành công!");
     }
 
     @Override
     public List<AddressDTO> getUserAddresses() {
-        Users user = getCurrentUser();
-        return addressRepository.findByUser(user).stream()
+        Users currentUser = getCurrentUser();
+        return addressRepository.findByUser(currentUser).stream()
                 .map(a -> new AddressDTO(a.getId(), a.getFullAddress(), a.getPhone(), a.getReceiveName()))
                 .collect(Collectors.toList());
     }
@@ -298,60 +354,25 @@ public class UserServiceImpl implements UserService {
     public AddressDTO getAddressById(Long addressId) {
         Address address = addressRepository.findById(addressId)
                 .orElseThrow(() -> new RuntimeException("Địa chỉ không tồn tại!"));
+        Users currentUser = getCurrentUser();
+        if (!address.getUser().getId().equals(currentUser.getId())) {
+            throw new RuntimeException("Bạn không có quyền truy cập địa chỉ này!");
+        }
         return new AddressDTO(address.getId(), address.getFullAddress(), address.getPhone(), address.getReceiveName());
     }
 
     //=======================HISTORY=========================
 
-    // ✅ Lấy toàn bộ lịch sử mua hàng của user
     @Override
     public List<OrderResponseDTO> getOrderHistory() {
         Users currentUser = getCurrentUser();
         List<Order> orders = orderRepository.findByUser(currentUser);
 
-        return orders.stream().map(order -> new OrderResponseDTO(
-                order.getId(),
-                order.getSerialNumber(),
-                order.getUser().getUsername(),
-                order.getTotalPrice(),
-                order.getStatus(),
-                order.getReceiveName(),
-                order.getReceiveAddress(),
-                order.getReceivePhone(),
-                order.getCreatedAt(),
-                order.getReceivedAt()
-        )).collect(Collectors.toList());
-
+        return orders.stream()
+                .map(this::mapToOrderResponseDTO)
+                .collect(Collectors.toList());
     }
 
-    // ✅ Lấy chi tiết một đơn hàng theo serialNumber
-    @Override
-    public OrderDetailResponseDTO getOrderDetail(String serialNumber) {
-        Order order = orderRepository.findBySerialNumber(serialNumber)
-                .orElseThrow(() -> new RuntimeException("Đơn hàng không tồn tại!"));
-
-        List<OrderItemDTO> items = orderDetailRepository.findByOrder(order).stream()
-                .map(item -> new OrderItemDTO(
-                        item.getProduct().getId(),
-                        item.getProduct().getProductName(),
-                        item.getUnitPrice(),
-                        item.getOrderQuantity()
-                )).collect(Collectors.toList());
-
-        return new OrderDetailResponseDTO(
-                order.getId(),
-                order.getSerialNumber(),
-                order.getTotalPrice(),
-                order.getStatus(),
-                order.getReceiveName(),
-                order.getReceivePhone(),
-                order.getReceiveAddress(),
-                order.getCreatedAt(),
-                items
-        );
-    }
-
-    // ✅ Lọc lịch sử đơn hàng theo trạng thái
     @Override
     public List<OrderResponseDTO> getOrdersByStatus(String orderStatus) {
         Users currentUser = getCurrentUser();
@@ -359,44 +380,104 @@ public class UserServiceImpl implements UserService {
         try {
             status = Order.OrderStatus.valueOf(orderStatus.toUpperCase());
         } catch (IllegalArgumentException e) {
-            throw new RuntimeException("Trạng thái đơn hàng không hợp lệ!");
+            throw new RuntimeException("Trạng thái đơn hàng không hợp lệ: " + orderStatus);
         }
 
         List<Order> orders = orderRepository.findByUserAndStatus(currentUser, status);
-        return orders.stream().map(order -> new OrderResponseDTO(
-                order.getId(),
-                order.getSerialNumber(),
-                order.getUser().getUsername(),
-                order.getTotalPrice(),
-                order.getStatus(),
-                order.getReceiveName(),
-                order.getReceiveAddress(),
-                order.getReceivePhone(),
-                order.getCreatedAt(),
-                order.getReceivedAt()
-        )).collect(Collectors.toList());
-
+        return orders.stream()
+                .map(this::mapToOrderResponseDTO)
+                .collect(Collectors.toList());
     }
 
-    // ✅ Hủy đơn hàng nếu nó đang ở trạng thái `WAITING`
+    @Override
+    public OrderDetailResponseDTO getOrderDetail(String serialNumber) {
+        Users currentUser = getCurrentUser();
+
+        // Tìm đơn hàng theo serialNumber và user
+        Order order = orderRepository.findBySerialNumberAndUser(serialNumber, currentUser)
+                .orElseThrow(() -> new RuntimeException("Đơn hàng không tồn tại hoặc không thuộc về bạn!"));
+
+        // Lấy danh sách chi tiết đơn hàng
+        List<OrderDetail> orderDetails = orderDetailRepository.findByOrder(order);
+        List<OrderItemDTO> items = orderDetails.stream()
+                .map(item -> new OrderItemDTO(
+                        item.getProductId(),
+                        item.getName(),
+                        item.getUnitPrice(),
+                        item.getOrderQuantity()
+                ))
+                .collect(Collectors.toList());
+
+        return OrderDetailResponseDTO.builder()
+                .id(order.getId())
+                .serialNumber(order.getSerialNumber())
+                .username(order.getUser().getUsername())
+                .totalPrice(order.getTotalPrice())
+                .status(order.getStatus())
+                .receiveName(order.getReceiveName())
+                .receiveAddress(order.getReceiveAddress())
+                .receivePhone(order.getReceivePhone())
+                .createdAt(order.getCreatedAt())
+                .receivedAt(order.getReceivedAt())
+                .items(items)
+                .build();
+    }
+
     @Override
     @Transactional
     public ResponseEntity<?> cancelOrder(Long orderId) {
+        Users currentUser = getCurrentUser();
+
+        // Tìm đơn hàng theo ID và user
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new RuntimeException("Đơn hàng không tồn tại!"));
 
+        // Kiểm tra quyền sở hữu
+        if (!order.getUser().getId().equals(currentUser.getId())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Bạn không có quyền hủy đơn hàng này!");
+        }
+
+        // Kiểm tra trạng thái đơn hàng
         if (!order.getStatus().equals(Order.OrderStatus.WAITING)) {
             return ResponseEntity.badRequest().body("Chỉ có thể hủy đơn hàng khi đang ở trạng thái chờ xác nhận!");
         }
 
+        // Cập nhật trạng thái đơn hàng
         order.setStatus(Order.OrderStatus.CANCELLED);
+
+        // Khôi phục số lượng tồn kho
+        List<OrderDetail> orderDetails = orderDetailRepository.findByOrder(order);
+        for (OrderDetail od : orderDetails) {
+            Product product = productRepository.findById(od.getProductId())
+                    .orElse(null);
+            if (product != null) {
+                product.setStockQuantity(product.getStockQuantity() + od.getOrderQuantity());
+                productRepository.save(product);
+            }
+        }
+
         orderRepository.save(order);
-        return ResponseEntity.ok("Hủy đơn hàng thành công!");
+        return ResponseEntity.ok("Hủy đơn hàng thành công và tồn kho đã được khôi phục!");
+    }
+
+    // Helper method để chuyển đổi Order thành OrderResponseDTO
+    private OrderResponseDTO mapToOrderResponseDTO(Order order) {
+        return OrderResponseDTO.builder()
+                .id(order.getId())
+                .serialNumber(order.getSerialNumber())
+                .username(order.getUser().getUsername())
+                .totalPrice(order.getTotalPrice())
+                .status(order.getStatus())
+                .receiveName(order.getReceiveName())
+                .receiveAddress(order.getReceiveAddress())
+                .receivePhone(order.getReceivePhone())
+                .createdAt(order.getCreatedAt())
+                .receivedAt(order.getReceivedAt())
+                .build();
     }
 
     //=======================WISHLIST=========================
 
-    // ✅ Thêm sản phẩm vào danh sách yêu thích
     @Override
     public ResponseEntity<?> addToWishList(Long productId) {
         Users currentUser = getCurrentUser();
@@ -415,7 +496,6 @@ public class UserServiceImpl implements UserService {
         return ResponseEntity.ok("Thêm vào danh sách yêu thích thành công!");
     }
 
-    // ✅ Xóa sản phẩm khỏi danh sách yêu thích
     @Override
     @Transactional
     public ResponseEntity<?> removeFromWishList(Long productId) {
@@ -428,7 +508,6 @@ public class UserServiceImpl implements UserService {
         return ResponseEntity.ok("Xóa sản phẩm khỏi danh sách yêu thích thành công!");
     }
 
-    // ✅ Lấy danh sách sản phẩm yêu thích của người dùng
     @Override
     public List<WishListDTO> getUserWishList() {
         Users currentUser = getCurrentUser();
@@ -439,7 +518,7 @@ public class UserServiceImpl implements UserService {
                 wishList.getProduct().getProductName(),
                 wishList.getProduct().getImage(),
                 wishList.getProduct().getDescription(),
-                wishList.getProduct().getUnitPrice().doubleValue()
+                wishList.getProduct().getUnitPrice()
         )).collect(Collectors.toList());
     }
 }

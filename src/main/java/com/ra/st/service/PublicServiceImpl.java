@@ -29,7 +29,7 @@ public class PublicServiceImpl implements PublicService {
         List<CategoryResponseDTO> categories = categoryRepository.findAll()
                 .stream()
                 .map(category -> new CategoryResponseDTO(
-                        category.getId(),
+                        category.getCategoryId(),
                         category.getCategoryName(),
                         category.getDescription(),
                         category.getStatus()))
@@ -40,20 +40,32 @@ public class PublicServiceImpl implements PublicService {
     // ✅ Lấy danh sách sản phẩm (có phân trang & sắp xếp)
     @Override
     public Page<ProductResponseDTO> getAllProducts(int page, int size, String sortBy, String order) {
-        Sort.Direction direction = order.equalsIgnoreCase("desc") ? Sort.Direction.DESC : Sort.Direction.ASC;
-        Pageable pageable = PageRequest.of(page, size, Sort.by(direction, sortBy));
+        Sort sort = order.equalsIgnoreCase("asc") ? Sort.by(sortBy).ascending() : Sort.by(sortBy).descending();
+        Pageable pageable = PageRequest.of(page, size, sort);
         Page<Product> products = productRepository.findAll(pageable);
 
-        return products.map(product -> new ProductResponseDTO(
-                product.getId(),
-                product.getProductName(),
-                product.getDescription(),
-                product.getUnitPrice(),
-                product.getStockQuantity(),
-                product.getImage(),
-                product.getCategory().getId(),
-                product.getFeatured()
-        ));
+        return products.map(product -> {
+            ProductResponseDTO dto = new ProductResponseDTO();
+            dto.setId(product.getId());
+            dto.setProductName(product.getProductName());
+            dto.setDescription(product.getDescription());
+            dto.setUnitPrice(product.getUnitPrice());
+            dto.setStockQuantity(product.getStockQuantity());
+            dto.setImage(product.getImage());
+
+            // Thêm thông tin category
+            if (product.getCategory() != null) {
+                CategoryResponseDTO categoryDTO = new CategoryResponseDTO();
+                categoryDTO.setCategoryId(product.getCategory().getCategoryId());
+                categoryDTO.setCategoryName(product.getCategory().getCategoryName());
+                categoryDTO.setDescription(product.getCategory().getDescription());
+                categoryDTO.setStatus(product.getCategory().getStatus());
+                dto.setCategory(categoryDTO);
+            }
+
+            dto.setFeatured(product.getFeatured());
+            return dto;
+        });
     }
 
     // ✅ Tìm kiếm sản phẩm theo tên/mô tả
@@ -62,16 +74,28 @@ public class PublicServiceImpl implements PublicService {
         Pageable pageable = PageRequest.of(page, size);
         Page<Product> products = productRepository.findByProductNameContainingIgnoreCase(keyword, pageable);
 
-        return products.map(product -> new ProductResponseDTO(
-                product.getId(),
-                product.getProductName(),
-                product.getDescription(),
-                product.getUnitPrice(),
-                product.getStockQuantity(),
-                product.getImage(),
-                product.getCategory().getId(),
-                product.getFeatured()
-        ));
+        return products.map(product -> {
+            ProductResponseDTO dto = new ProductResponseDTO();
+            dto.setId(product.getId());
+            dto.setProductName(product.getProductName());
+            dto.setDescription(product.getDescription());
+            dto.setUnitPrice(product.getUnitPrice());
+            dto.setStockQuantity(product.getStockQuantity());
+            dto.setImage(product.getImage());
+
+            // Thêm thông tin category
+            if (product.getCategory() != null) {
+                CategoryResponseDTO categoryDTO = new CategoryResponseDTO();
+                categoryDTO.setCategoryId(product.getCategory().getCategoryId());
+                categoryDTO.setCategoryName(product.getCategory().getCategoryName());
+                categoryDTO.setDescription(product.getCategory().getDescription());
+                categoryDTO.setStatus(product.getCategory().getStatus());
+                dto.setCategory(categoryDTO);
+            }
+
+            dto.setFeatured(product.getFeatured());
+            return dto;
+        });
     }
 
     // ✅ Lấy danh sách sản phẩm nổi bật
@@ -79,16 +103,59 @@ public class PublicServiceImpl implements PublicService {
     public ResponseEntity<?> getFeaturedProducts() {
         List<ProductResponseDTO> products = productRepository.findByFeaturedTrue()
                 .stream()
-                .map(product -> new ProductResponseDTO(
-                        product.getId(),
-                        product.getProductName(),
-                        product.getDescription(),
-                        product.getUnitPrice(),
-                        product.getStockQuantity(),
-                        product.getImage(),
-                        product.getCategory().getId(),
-                        product.getFeatured()))
+                .map(product -> {
+                    ProductResponseDTO dto = new ProductResponseDTO();
+                    dto.setId(product.getId());
+                    dto.setProductName(product.getProductName());
+                    dto.setDescription(product.getDescription());
+                    dto.setUnitPrice(product.getUnitPrice());
+                    dto.setStockQuantity(product.getStockQuantity());
+                    dto.setImage(product.getImage());
+
+                    // Thêm thông tin category
+                    if (product.getCategory() != null) {
+                        CategoryResponseDTO categoryDTO = new CategoryResponseDTO();
+                        categoryDTO.setCategoryId(product.getCategory().getCategoryId());
+                        categoryDTO.setCategoryName(product.getCategory().getCategoryName());
+                        categoryDTO.setDescription(product.getCategory().getDescription());
+                        categoryDTO.setStatus(product.getCategory().getStatus());
+                        dto.setCategory(categoryDTO);
+                    }
+
+                    dto.setFeatured(product.getFeatured());
+                    return dto;
+                })
                 .collect(Collectors.toList());
+
+        if (products.isEmpty()) {
+            // Nếu không có sản phẩm nổi bật, lấy 10 sản phẩm mới nhất
+            Pageable pageable = PageRequest.of(0, 10, Sort.by(Sort.Direction.DESC, "createdAt"));
+            products = productRepository.findNewProducts(pageable)
+                    .stream()
+                    .map(product -> {
+                        ProductResponseDTO dto = new ProductResponseDTO();
+                        dto.setId(product.getId());
+                        dto.setProductName(product.getProductName());
+                        dto.setDescription(product.getDescription());
+                        dto.setUnitPrice(product.getUnitPrice());
+                        dto.setStockQuantity(product.getStockQuantity());
+                        dto.setImage(product.getImage());
+
+                        // Thêm thông tin category
+                        if (product.getCategory() != null) {
+                            CategoryResponseDTO categoryDTO = new CategoryResponseDTO();
+                            categoryDTO.setCategoryId(product.getCategory().getCategoryId());
+                            categoryDTO.setCategoryName(product.getCategory().getCategoryName());
+                            categoryDTO.setDescription(product.getCategory().getDescription());
+                            categoryDTO.setStatus(product.getCategory().getStatus());
+                            dto.setCategory(categoryDTO);
+                        }
+
+                        dto.setFeatured(product.getFeatured());
+                        return dto;
+                    })
+                    .collect(Collectors.toList());
+        }
 
         return ResponseEntity.ok(products);
     }
@@ -96,17 +163,30 @@ public class PublicServiceImpl implements PublicService {
     // ✅ Lấy danh sách sản phẩm mới nhất
     @Override
     public ResponseEntity<?> getNewProducts() {
-        Pageable pageable = PageRequest.of(0, 10, Sort.by(Sort.Direction.DESC, "createdAt"));
-        List<ProductResponseDTO> products = productRepository.findAll(pageable).stream()
-                .map(product -> new ProductResponseDTO(
-                        product.getId(),
-                        product.getProductName(),
-                        product.getDescription(),
-                        product.getUnitPrice(),
-                        product.getStockQuantity(),
-                        product.getImage(),
-                        product.getCategory().getId(),
-                        product.getFeatured()))
+        Pageable pageable = PageRequest.of(0, 10);
+        List<ProductResponseDTO> products = productRepository.findNewProducts(pageable)
+                .stream()
+                .map(product -> {
+                    ProductResponseDTO dto = new ProductResponseDTO();
+                    dto.setId(product.getId());
+                    dto.setProductName(product.getProductName());
+                    dto.setDescription(product.getDescription());
+                    dto.setUnitPrice(product.getUnitPrice());
+                    dto.setStockQuantity(product.getStockQuantity());
+                    dto.setImage(product.getImage());
+
+                    if (product.getCategory() != null) {
+                        CategoryResponseDTO categoryDTO = new CategoryResponseDTO();
+                        categoryDTO.setCategoryId(product.getCategory().getCategoryId());
+                        categoryDTO.setCategoryName(product.getCategory().getCategoryName());
+                        categoryDTO.setDescription(product.getCategory().getDescription());
+                        categoryDTO.setStatus(product.getCategory().getStatus());
+                        dto.setCategory(categoryDTO);
+                    }
+
+                    dto.setFeatured(product.getFeatured());
+                    return dto;
+                })
                 .collect(Collectors.toList());
 
         return ResponseEntity.ok(products);
@@ -116,16 +196,31 @@ public class PublicServiceImpl implements PublicService {
     @Override
     public ResponseEntity<?> getBestSellerProducts() {
         Pageable pageable = PageRequest.of(0, 10);
-        List<ProductResponseDTO> products = productRepository.findTopBestSellingProducts(pageable).stream()
-                .map(product -> new ProductResponseDTO(
-                        product.getId(),
-                        product.getProductName(),
-                        product.getDescription(),
-                        product.getUnitPrice(),
-                        product.getStockQuantity(),
-                        product.getImage(),
-                        product.getCategory().getId(),
-                        product.getFeatured()))
+        List<Object[]> results = productRepository.findBestSellingProducts(pageable);
+
+        List<ProductResponseDTO> products = results.stream()
+                .map(result -> {
+                    Product product = (Product) result[0];
+                    ProductResponseDTO dto = new ProductResponseDTO();
+                    dto.setId(product.getId());
+                    dto.setProductName(product.getProductName());
+                    dto.setDescription(product.getDescription());
+                    dto.setUnitPrice(product.getUnitPrice());
+                    dto.setStockQuantity(product.getStockQuantity());
+                    dto.setImage(product.getImage());
+
+                    if (product.getCategory() != null) {
+                        CategoryResponseDTO categoryDTO = new CategoryResponseDTO();
+                        categoryDTO.setCategoryId(product.getCategory().getCategoryId());
+                        categoryDTO.setCategoryName(product.getCategory().getCategoryName());
+                        categoryDTO.setDescription(product.getCategory().getDescription());
+                        categoryDTO.setStatus(product.getCategory().getStatus());
+                        dto.setCategory(categoryDTO);
+                    }
+
+                    dto.setFeatured(product.getFeatured());
+                    return dto;
+                })
                 .collect(Collectors.toList());
 
         return ResponseEntity.ok(products);
@@ -134,17 +229,30 @@ public class PublicServiceImpl implements PublicService {
     // ✅ Lấy danh sách sản phẩm theo danh mục
     @Override
     public ResponseEntity<?> getProductsByCategory(Long categoryId) {
-        List<ProductResponseDTO> products = productRepository.findByCategoryId(categoryId)
+        List<ProductResponseDTO> products = productRepository.findByCategoryCategoryId(categoryId)
                 .stream()
-                .map(product -> new ProductResponseDTO(
-                        product.getId(),
-                        product.getProductName(),
-                        product.getDescription(),
-                        product.getUnitPrice(),
-                        product.getStockQuantity(),
-                        product.getImage(),
-                        product.getCategory().getId(),
-                        product.getFeatured()))
+                .map(product -> {
+                    ProductResponseDTO dto = new ProductResponseDTO();
+                    dto.setId(product.getId());
+                    dto.setProductName(product.getProductName());
+                    dto.setDescription(product.getDescription());
+                    dto.setUnitPrice(product.getUnitPrice());
+                    dto.setStockQuantity(product.getStockQuantity());
+                    dto.setImage(product.getImage());
+
+                    // Thêm thông tin category
+                    if (product.getCategory() != null) {
+                        CategoryResponseDTO categoryDTO = new CategoryResponseDTO();
+                        categoryDTO.setCategoryId(product.getCategory().getCategoryId());
+                        categoryDTO.setCategoryName(product.getCategory().getCategoryName());
+                        categoryDTO.setDescription(product.getCategory().getDescription());
+                        categoryDTO.setStatus(product.getCategory().getStatus());
+                        dto.setCategory(categoryDTO);
+                    }
+
+                    dto.setFeatured(product.getFeatured());
+                    return dto;
+                })
                 .collect(Collectors.toList());
 
         return ResponseEntity.ok(products);
@@ -156,15 +264,25 @@ public class PublicServiceImpl implements PublicService {
         Product product = productRepository.findById(productId)
                 .orElseThrow(() -> new RuntimeException("Sản phẩm không tồn tại!"));
 
-        return ResponseEntity.ok(new ProductResponseDTO(
-                product.getId(),
-                product.getProductName(),
-                product.getDescription(),
-                product.getUnitPrice(),
-                product.getStockQuantity(),
-                product.getImage(),
-                product.getCategory().getId(),
-                product.getFeatured()
-        ));
+        ProductResponseDTO dto = new ProductResponseDTO();
+        dto.setId(product.getId());
+        dto.setProductName(product.getProductName());
+        dto.setDescription(product.getDescription());
+        dto.setUnitPrice(product.getUnitPrice());
+        dto.setStockQuantity(product.getStockQuantity());
+        dto.setImage(product.getImage());
+
+        // Thêm thông tin category
+        if (product.getCategory() != null) {
+            CategoryResponseDTO categoryDTO = new CategoryResponseDTO();
+            categoryDTO.setCategoryId(product.getCategory().getCategoryId());
+            categoryDTO.setCategoryName(product.getCategory().getCategoryName());
+            categoryDTO.setDescription(product.getCategory().getDescription());
+            categoryDTO.setStatus(product.getCategory().getStatus());
+            dto.setCategory(categoryDTO);
+        }
+
+        dto.setFeatured(product.getFeatured());
+        return ResponseEntity.ok(dto);
     }
 }

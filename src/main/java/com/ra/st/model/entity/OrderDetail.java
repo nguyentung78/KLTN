@@ -21,11 +21,6 @@ public class OrderDetail {
     @JoinColumn(name = "order_id")
     private Order order;
 
-    @ManyToOne
-    @MapsId("productId")
-    @JoinColumn(name = "product_id")
-    private Product product;
-
     @Column(name = "name", nullable = false, length = 100)
     private String name;
 
@@ -34,4 +29,8 @@ public class OrderDetail {
 
     @Column(name = "order_quantity", nullable = false)
     private Integer orderQuantity;
+
+    public Long getProductId() {
+        return id != null ? id.getProductId() : null;
+    }
 }

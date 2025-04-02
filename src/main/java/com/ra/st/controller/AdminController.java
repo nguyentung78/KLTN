@@ -5,6 +5,7 @@ import com.ra.st.model.entity.Category;
 import com.ra.st.model.entity.Order;
 import com.ra.st.model.entity.Product;
 import com.ra.st.service.AdminService;
+import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -74,8 +75,8 @@ public class AdminController {
     @GetMapping("/categories")
     public ResponseEntity<?> getAllCategories(
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "10") int size,
-            @RequestParam(defaultValue = "id") String sortBy,
+            @RequestParam(defaultValue = "5") int size,
+            @RequestParam(defaultValue = "categoryId") String sortBy,
             @RequestParam(defaultValue = "asc") String order) {
         return adminService.getAllCategories(page, size, sortBy, order);
     }
@@ -88,13 +89,13 @@ public class AdminController {
 
     // Thêm mới danh mục
     @PostMapping("/categories")
-    public ResponseEntity<?> createCategory(@RequestBody CategoryRequestDTO categoryRequest) {
+    public ResponseEntity<?> createCategory(@Valid @RequestBody CategoryRequestDTO categoryRequest) {
         return adminService.createCategory(categoryRequest);
     }
 
     // Chỉnh sửa thông tin danh mục
     @PutMapping("/categories/{categoryId}")
-    public ResponseEntity<?> updateCategory(@PathVariable Long categoryId, @RequestBody CategoryRequestDTO categoryRequest) {
+    public ResponseEntity<?> updateCategory(@PathVariable Long categoryId,@Valid @RequestBody CategoryRequestDTO categoryRequest) {
         return adminService.updateCategory(categoryId, categoryRequest);
     }
 
@@ -124,7 +125,14 @@ public class AdminController {
             @RequestParam(defaultValue = "asc") String order) {
         return adminService.getAllProducts(page, size, sortBy, order);
     }
-
+    // Tìm kiếm sản phẩm theo keyword
+    @GetMapping("/products/search")
+    public ResponseEntity<?> searchProducts(
+            @RequestParam(required = false) String keyword,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        return adminService.searchProducts(keyword, page, size);
+    }
     // Lấy chi tiết sản phẩm theo ID
     @GetMapping("/products/{productId}")
     public ResponseEntity<?> getProductById(@PathVariable Long productId) {
@@ -134,7 +142,6 @@ public class AdminController {
     // Thêm mới
     @PostMapping(value = "/products", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<?> createProduct(
-            @RequestParam("sku") String sku,
             @RequestParam("productName") String productName,
             @RequestParam("description") String description,
             @RequestParam("unitPrice") BigDecimal unitPrice,
@@ -143,7 +150,6 @@ public class AdminController {
             @RequestParam(value = "image", required = false) MultipartFile image) {
 
         ProductRequestDTO productRequest = ProductRequestDTO.builder()
-                .sku(sku)
                 .productName(productName)
                 .description(description)
                 .unitPrice(unitPrice)
@@ -155,7 +161,6 @@ public class AdminController {
         return adminService.createProduct(productRequest);
     }
 
-
     // Chỉnh sửa sản phẩm
     @PutMapping(value = "/products/{productId}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<?> updateProduct(
@@ -166,7 +171,10 @@ public class AdminController {
             @RequestParam(value = "stockQuantity", required = false) Integer stockQuantity,
             @RequestParam(value = "categoryId", required = false) Long categoryId,
             @RequestParam(value = "image", required = false) MultipartFile image) {
-
+        if (productName == null && description == null && unitPrice == null
+                && stockQuantity == null && categoryId == null && image == null) {
+            return ResponseEntity.badRequest().body("Không có dữ liệu để cập nhật!");
+        }
         ProductRequestDTO productRequest = ProductRequestDTO.builder()
                 .productName(productName)
                 .description(description)
@@ -193,9 +201,10 @@ public class AdminController {
     public ResponseEntity<Page<OrderResponseDTO>> getAllOrders(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size,
-            @RequestParam(defaultValue = "createdAt") String sortBy,
-            @RequestParam(defaultValue = "desc") String order) {
-        return ResponseEntity.ok(adminService.getAllOrders(page, size, sortBy, order));
+            @RequestParam(defaultValue = "desc") String direction,
+            @RequestParam(defaultValue = "createdAt") String sortBy) {
+        Page<OrderResponseDTO> orders = adminService.getAllOrders(page, size, direction, sortBy);
+        return ResponseEntity.ok(orders);
     }
 
     // Lấy danh sách đơn hàng theo trạng thái (phân trang)
@@ -211,15 +220,33 @@ public class AdminController {
     // Lấy chi tiết đơn hàng theo ID
     @GetMapping("/orders/{orderId}")
     public ResponseEntity<OrderResponseDTO> getOrderById(@PathVariable Long orderId) {
-        return ResponseEntity.ok(adminService.getOrderById(orderId));
+        OrderResponseDTO order = adminService.getOrderById(orderId);
+        return ResponseEntity.ok(order);
     }
 
     // Cập nhật trạng thái đơn hàng
     @PutMapping("/orders/{orderId}/status")
-    public ResponseEntity<?> updateOrderStatus(
+    public ResponseEntity<OrderResponseDTO> updateOrderStatus(
             @PathVariable Long orderId,
-            @RequestBody OrderRequestDTO request) {
-        return adminService.updateOrderStatus(orderId, request.getOrderStatus());
+            @RequestBody OrderStatusRequest request) {
+        if (request.getOrderStatus() == null) {
+            return ResponseEntity.badRequest().body(null);
+        }
+        OrderResponseDTO updatedOrder = adminService.updateOrderStatus(orderId, request.getOrderStatus());
+        return ResponseEntity.ok(updatedOrder);
+    }
+
+    // DTO để nhận trạng thái đơn hàng từ request
+    private static class OrderStatusRequest {
+        private Order.OrderStatus orderStatus;
+
+        public Order.OrderStatus getOrderStatus() {
+            return orderStatus;
+        }
+
+        public void setOrderStatus(Order.OrderStatus orderStatus) {
+            this.orderStatus = orderStatus;
+        }
     }
 
     // ======================= REPORT =========================

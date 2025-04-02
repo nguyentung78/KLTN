@@ -16,7 +16,7 @@ public class Category {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "category_id", nullable = false, updatable = false)
-    private Long id;
+    private Long categoryId;
 
     @Column(name = "category_name", nullable = false, length = 100, unique = true)
     private String categoryName;
@@ -27,7 +27,6 @@ public class Category {
     @Column(name = "status", nullable = false)
     private Boolean status = true;
 
-    // Liên kết với Product (One-to-Many)
     @OneToMany(mappedBy = "category", cascade = CascadeType.ALL, orphanRemoval = true)
     private Set<Product> products;
 }

@@ -15,6 +15,5 @@ public interface OrderDetailRepository extends JpaRepository<OrderDetail, OrderD
     List<OrderDetail> findByOrder(Order order);
 
     // ✅ Lấy danh sách chi tiết đơn hàng theo orderId
-    @Query("SELECT od FROM OrderDetail od WHERE od.id.orderId = :orderId")
-    List<OrderDetail> findByOrderId(@Param("orderId") Long orderId);
+
 }

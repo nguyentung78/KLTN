@@ -10,7 +10,9 @@ import java.util.List;
 @Setter
 @Builder
 public class ReportResponseDTO {
-    private BigDecimal totalRevenue; // Doanh thu tổng cộng
-    private Integer totalOrders; // Số lượng đơn hàng
-    private List<String> topItems; // Danh sách sản phẩm hoặc khách hàng top
+    private BigDecimal totalRevenue;
+    private Integer totalOrders;
+    private List<TopItemDTO> topItems;
+    private List<NewAccountDTO> newAccounts;
+    private List<TimeSeriesDTO> timeSeriesData;
 }
