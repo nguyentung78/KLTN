@@ -52,6 +52,7 @@ public class AuthServiceImp implements AuthService {
                 .typeToken("Bearer Token")
                 .accessToken(jwtProvider.generateToken(userPrinciple))
                 .roles(roleResponseDTOS)
+                .avatar(userPrinciple.getUser().getAvatar())
                 .build();
     }
 

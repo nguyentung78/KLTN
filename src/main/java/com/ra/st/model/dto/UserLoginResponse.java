@@ -14,4 +14,5 @@ public class UserLoginResponse {
     private String typeToken;
     private String accessToken;
     private Set<RoleResponseDTO> roles;
+    private String avatar;
 }

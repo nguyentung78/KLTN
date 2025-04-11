@@ -22,4 +22,5 @@ public class CheckoutRequestDTO {
 
     @Size(max = 100, message = "Ghi chú không được vượt quá 100 ký tự")
     private String note;
+    private String paymentMethod;
 }

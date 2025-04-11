@@ -10,7 +10,6 @@ import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -23,6 +22,7 @@ import java.util.List;
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
+
     @Autowired
     private UserDetailService userDetailService;
     @Autowired
@@ -31,42 +31,52 @@ public class SecurityConfig {
     private CustomAccessDeniedHandler customAccessDeniedHandler;
     @Autowired
     private JwtEntryPoint jwtEntryPoint;
+
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity httpSecurity) throws Exception {
         return httpSecurity
-                .cors(cf -> cf.configurationSource(request ->
-                {
+                .cors(cf -> cf.configurationSource(request -> {
                     CorsConfiguration config = new CorsConfiguration();
-                    config.setAllowedOrigins(List.of("http://localhost:5173")); // phụ thuộc vào port clents
+                    config.setAllowedOrigins(List.of("http://localhost:5173"));
                     config.setAllowedMethods(List.of("*"));
                     config.setAllowCredentials(true);
                     config.setAllowedHeaders(List.of("*"));
                     config.setExposedHeaders(List.of("*"));
                     return config;
                 }))
-                .csrf(AbstractHttpConfigurer::disable)
+                .csrf(csrf -> csrf.disable())
                 .authenticationProvider(authenticationProvider())
-                .authorizeHttpRequests(auth->{
-                    auth
-                            .requestMatchers("/api/v1/admin/**").permitAll() //hasAuthority("ADMIN")
-                            .requestMatchers("/api/v1/user/**").hasAuthority("USER")
-                            .requestMatchers("/api/v1/public/**", "/api/v1/auth/**").permitAll()
-                            .anyRequest().authenticated();
-                }).sessionManagement(auth->auth.sessionCreationPolicy(SessionCreationPolicy.STATELESS)).
-                exceptionHandling(auth->auth.authenticationEntryPoint(jwtEntryPoint).accessDeniedHandler(customAccessDeniedHandler)).
-                addFilterAfter(jwtAuthTokenFilter, UsernamePasswordAuthenticationFilter.class).
-                build();
+                .authorizeHttpRequests(auth -> auth
+                        // Các endpoint permitAll phải được đặt trước các quy tắc yêu cầu xác thực
+                        .requestMatchers("/api/v1/user/cart/checkout/success").permitAll()
+                        .requestMatchers("/api/v1/user/cart/checkout/cancel").permitAll()
+                        .requestMatchers("/api/v1/public/**").permitAll()
+                        .requestMatchers("/api/v1/auth/**").permitAll()
+                        .requestMatchers("/api/paypal/**").permitAll()
+                        // Các endpoint yêu cầu quyền
+                        .requestMatchers("/api/v1/admin/**").hasAuthority("ADMIN")
+                        .requestMatchers("/api/v1/user/**").hasAuthority("USER")
+                        // Mọi yêu cầu khác cần xác thực
+                        .anyRequest().authenticated()
+                )
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .exceptionHandling(ex -> ex
+                        .authenticationEntryPoint(jwtEntryPoint)
+                        .accessDeniedHandler(customAccessDeniedHandler))
+                .addFilterBefore(jwtAuthTokenFilter, UsernamePasswordAuthenticationFilter.class)
+                .build();
     }
+
     @Bean
-    public AuthenticationProvider authenticationProvider(){
+    public AuthenticationProvider authenticationProvider() {
         DaoAuthenticationProvider authenticationProvider = new DaoAuthenticationProvider();
         authenticationProvider.setUserDetailsService(userDetailService);
         authenticationProvider.setPasswordEncoder(passwordEncoder());
         return authenticationProvider;
     }
+
     @Bean
-    public PasswordEncoder passwordEncoder(){
+    public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
     }
-
 }

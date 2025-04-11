@@ -1,9 +1,14 @@
 package com.ra.st.service;
 
+import com.paypal.api.payments.Payment;
+import com.paypal.base.rest.PayPalRESTException;
 import com.ra.st.model.dto.*;
 import com.ra.st.model.entity.*;
 import com.ra.st.repository.*;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -12,9 +17,7 @@ import org.springframework.stereotype.Service;
 import jakarta.transaction.Transactional;
 
 import java.math.BigDecimal;
-import java.util.Date;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
@@ -38,6 +41,8 @@ public class UserServiceImpl implements UserService {
     private UploadService uploadService;
     @Autowired
     private WishListRepository wishListRepository;
+    @Autowired
+    private PayPalService payPalService;
 
     //=======================CART=========================
 
@@ -90,9 +95,22 @@ public class UserServiceImpl implements UserService {
         ShoppingCart cartItem = shoppingCartRepository.findById(cartItemId)
                 .orElseThrow(() -> new RuntimeException("Sản phẩm trong giỏ hàng không tồn tại!"));
 
+        Users currentUser = getCurrentUser();
+
+        if (!cartItem.getUser().getId().equals(currentUser.getId())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("Bạn không có quyền chỉnh sửa mục giỏ hàng này!");
+        }
+
         if (quantity <= 0) {
             shoppingCartRepository.delete(cartItem);
             return ResponseEntity.ok("Đã xóa sản phẩm khỏi giỏ hàng.");
+        }
+
+        Product product = cartItem.getProduct();
+        if (product.getStockQuantity() < quantity) {
+            return ResponseEntity.badRequest()
+                    .body("Sản phẩm " + product.getProductName() + " không đủ hàng! Còn lại: " + product.getStockQuantity());
         }
 
         cartItem.setOrderQuantity(quantity);
@@ -102,6 +120,16 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public ResponseEntity<?> removeCartItem(Long cartItemId) {
+        ShoppingCart cartItem = shoppingCartRepository.findById(cartItemId)
+                .orElseThrow(() -> new RuntimeException("Sản phẩm trong giỏ hàng không tồn tại!"));
+
+        Users currentUser = getCurrentUser();
+
+        if (!cartItem.getUser().getId().equals(currentUser.getId())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("Bạn không có quyền xóa mục giỏ hàng này!");
+        }
+
         shoppingCartRepository.deleteById(cartItemId);
         return ResponseEntity.ok("Xóa sản phẩm khỏi giỏ hàng thành công!");
     }
@@ -124,7 +152,6 @@ public class UserServiceImpl implements UserService {
             return ResponseEntity.badRequest().body("Giỏ hàng trống!");
         }
 
-        // Kiểm tra stockQuantity của từng sản phẩm trong giỏ hàng
         for (ShoppingCart item : cartItems) {
             Product product = item.getProduct();
             if (product.getStockQuantity() < item.getOrderQuantity()) {
@@ -135,34 +162,26 @@ public class UserServiceImpl implements UserService {
 
         Address selectedAddress = null;
 
-        // Trường hợp 1: Người dùng chọn địa chỉ đã lưu (addressId)
         if (request.getAddressId() != null) {
-            // Lấy địa chỉ từ repository
             Address address = addressRepository.findById(request.getAddressId())
                     .orElseThrow(() -> new RuntimeException("Địa chỉ không tồn tại!"));
-
-            // Kiểm tra xem địa chỉ có thuộc về người dùng hiện tại không
             if (!address.getUser().getId().equals(currentUser.getId())) {
                 return ResponseEntity.badRequest()
                         .body("Địa chỉ này không tồn tại hoặc không phải của bạn!");
             }
             selectedAddress = address;
-        }
-        // Trường hợp 2: Người dùng nhập địa chỉ mới
-        else if (request.getReceiveAddress() != null && !request.getReceiveAddress().trim().isEmpty()
+        } else if (request.getReceiveAddress() != null && !request.getReceiveAddress().trim().isEmpty()
                 && request.getReceivePhone() != null && !request.getReceivePhone().trim().isEmpty()
                 && request.getReceiveName() != null && !request.getReceiveName().trim().isEmpty()) {
-            // Kiểm tra định dạng số điện thoại
             if (!request.getReceivePhone().matches("^\\d{10}$")) {
                 return ResponseEntity.badRequest()
                         .body("Số điện thoại nhận hàng phải có 10 chữ số!");
             }
             selectedAddress = new Address(null, currentUser, request.getReceiveAddress(),
                     request.getReceivePhone(), request.getReceiveName());
-            // Lưu địa chỉ mới vào cơ sở dữ liệu (tùy chọn, nếu bạn muốn lưu lại)
             addressRepository.save(selectedAddress);
         }
-        // Kiểm tra xem người dùng có chọn địa chỉ hay không
+
         if (selectedAddress == null) {
             List<Address> userAddresses = addressRepository.findByUser(currentUser);
             if (userAddresses.isEmpty()) {
@@ -173,27 +192,25 @@ public class UserServiceImpl implements UserService {
                     .body("Vui lòng chọn địa chỉ giao hàng!");
         }
 
-        // Tạo đơn hàng mới
         Order newOrder = new Order();
         newOrder.setUser(currentUser);
         newOrder.setSerialNumber(UUID.randomUUID().toString());
-        newOrder.setTotalPrice(cartItems.stream()
+        BigDecimal totalPrice = cartItems.stream()
                 .map(item -> item.getProduct().getUnitPrice().multiply(BigDecimal.valueOf(item.getOrderQuantity())))
-                .reduce(BigDecimal.ZERO, BigDecimal::add));
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        newOrder.setTotalPrice(totalPrice);
         newOrder.setStatus(Order.OrderStatus.WAITING);
         newOrder.setCreatedAt(new Date());
         newOrder.setReceiveAddress(selectedAddress.getFullAddress());
         newOrder.setReceivePhone(selectedAddress.getPhone());
         newOrder.setReceiveName(selectedAddress.getReceiveName());
-        newOrder.setNote(request.getNote() != null ? request.getNote() : ""); // Gán note, mặc định là chuỗi rỗng nếu null
+        newOrder.setNote(request.getNote() != null ? request.getNote() : "");
 
         orderRepository.save(newOrder);
 
-        // Lưu chi tiết đơn hàng và giảm stockQuantity
         for (ShoppingCart item : cartItems) {
             Product product = item.getProduct();
             OrderDetailKey orderDetailKey = new OrderDetailKey(newOrder.getId(), product.getId());
-
             OrderDetail orderDetail = new OrderDetail();
             orderDetail.setId(orderDetailKey);
             orderDetail.setOrder(newOrder);
@@ -203,14 +220,36 @@ public class UserServiceImpl implements UserService {
 
             orderDetailRepository.save(orderDetail);
 
-            // Giảm stockQuantity
             product.setStockQuantity(product.getStockQuantity() - item.getOrderQuantity());
             productRepository.save(product);
         }
 
         shoppingCartRepository.deleteByUser(currentUser);
 
-        return ResponseEntity.ok("Đặt hàng thành công!");
+        if ("paypal".equalsIgnoreCase(request.getPaymentMethod())) {
+            try {
+                String approvalUrl = payPalService.createPayment(
+                        totalPrice.doubleValue(),
+                        "VND",
+                        "Thanh toán đơn hàng #" + newOrder.getSerialNumber(),
+                        "http://localhost:5173/user/cart/checkout/cancel?orderId=" + newOrder.getId(),
+                        "http://localhost:5173/user/cart/checkout/success?orderId=" + newOrder.getId(),
+                        true
+                );
+
+                Map<String, String> response = new HashMap<>();
+                response.put("message", "Đơn hàng đã được tạo, vui lòng hoàn tất thanh toán!");
+                response.put("redirectUrl", approvalUrl);
+                response.put("orderId", newOrder.getId().toString());
+                return ResponseEntity.ok(response);
+            } catch (PayPalRESTException e) {
+                orderRepository.delete(newOrder);
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                        .body("Lỗi khi khởi tạo thanh toán PayPal: " + e.getMessage());
+            }
+        } else {
+            return ResponseEntity.ok("Đặt hàng thành công với phương thức COD!");
+        }
     }
 
     //=======================ACCOUNT=========================
@@ -236,46 +275,58 @@ public class UserServiceImpl implements UserService {
     @Override
     public ResponseEntity<?> updateUserProfile(UserProfileUpdateDTO request) {
         Users user = getCurrentUser();
-        boolean isUpdated = false; // Kiểm tra xem có gì được cập nhật không
-        if (request.getEmail() != null && !request.getEmail().matches("^[\\w-\\.]+@([\\w-]+\\.)+[\\w-]{2,4}$")) {
-            return ResponseEntity.badRequest().body("Email không hợp lệ");
+        boolean isUpdated = false;
+
+        if (request.getUsername() != null) {
+            if (request.getUsername().trim().isEmpty()) {
+                return ResponseEntity.badRequest().body("Username không được để trống!");
+            }
+            if (!request.getUsername().equals(user.getUsername())) {
+                Users existingUser = userRepository.findUserByUsername(request.getUsername());
+                if (existingUser != null && !existingUser.getId().equals(user.getId())) {
+                    return ResponseEntity.badRequest().body("Username đã tồn tại!");
+                }
+                user.setUsername(request.getUsername());
+                isUpdated = true;
+            }
         }
+
+        if (request.getEmail() != null) {
+            if (request.getEmail().trim().isEmpty()) {
+                return ResponseEntity.badRequest().body("Email không được để trống!");
+            }
+            if (!request.getEmail().matches("^[\\w-\\.]+@([\\w-]+\\.)+[\\w-]{2,4}$")) {
+                return ResponseEntity.badRequest().body("Email không hợp lệ!");
+            }
+            if (!request.getEmail().equals(user.getEmail())) {
+                Users existingEmailUser = userRepository.findUsersByEmail(request.getEmail());
+                if (existingEmailUser != null && !existingEmailUser.getId().equals(user.getId())) {
+                    return ResponseEntity.badRequest().body("Email đã tồn tại!");
+                }
+                user.setEmail(request.getEmail());
+                isUpdated = true;
+            }
+        }
+
         if (request.getPhone() != null && !request.getPhone().trim().isEmpty()) {
             if (!request.getPhone().matches("^\\d{10}$")) {
-                throw new RuntimeException("Số điện thoại phải có 10 chữ số!");
+                return ResponseEntity.badRequest().body("Số điện thoại phải có 10 chữ số!");
             }
-            if (userRepository.existsByPhone(request.getPhone()) && !request.getPhone().equals(user.getPhone())) {
-                throw new RuntimeException("Số điện thoại đã tồn tại!");
+            if (!request.getPhone().equals(user.getPhone()) && userRepository.existsByPhone(request.getPhone())) {
+                return ResponseEntity.badRequest().body("Số điện thoại đã tồn tại!");
             }
             user.setPhone(request.getPhone());
-        }
-        if (request.getUsername() != null && !request.getUsername().trim().isEmpty()) {
-            if (userRepository.findUserByUsername(request.getUsername()) != null) {
-                return ResponseEntity.badRequest().body("Username đã tồn tại!");
-            }
-            user.setUsername(request.getUsername());
             isUpdated = true;
         }
 
-        if (request.getEmail() != null && !request.getEmail().trim().isEmpty()) {
-            if (userRepository.findUsersByEmail(request.getEmail()) != null) {
-                return ResponseEntity.badRequest().body("Email đã tồn tại!");
-            }
-            user.setEmail(request.getEmail());
-            isUpdated = true;
-        }
-
-        if (request.getFullname() != null && !request.getFullname().trim().isEmpty()) {
+        if (request.getFullname() != null && !request.getFullname().trim().isEmpty()
+                && !request.getFullname().equals(user.getFullname())) {
             user.setFullname(request.getFullname());
             isUpdated = true;
         }
 
-        if (request.getPhone() != null && !request.getPhone().trim().isEmpty()) {
-            user.setPhone(request.getPhone());
-            isUpdated = true;
-        }
-
-        if (request.getAddress() != null && !request.getAddress().trim().isEmpty()) {
+        if (request.getAddress() != null && !request.getAddress().trim().isEmpty()
+                && !request.getAddress().equals(user.getAddress())) {
             user.setAddress(request.getAddress());
             isUpdated = true;
         }
@@ -393,11 +444,9 @@ public class UserServiceImpl implements UserService {
     public OrderDetailResponseDTO getOrderDetail(String serialNumber) {
         Users currentUser = getCurrentUser();
 
-        // Tìm đơn hàng theo serialNumber và user
         Order order = orderRepository.findBySerialNumberAndUser(serialNumber, currentUser)
                 .orElseThrow(() -> new RuntimeException("Đơn hàng không tồn tại hoặc không thuộc về bạn!"));
 
-        // Lấy danh sách chi tiết đơn hàng
         List<OrderDetail> orderDetails = orderDetailRepository.findByOrder(order);
         List<OrderItemDTO> items = orderDetails.stream()
                 .map(item -> new OrderItemDTO(
@@ -428,24 +477,19 @@ public class UserServiceImpl implements UserService {
     public ResponseEntity<?> cancelOrder(Long orderId) {
         Users currentUser = getCurrentUser();
 
-        // Tìm đơn hàng theo ID và user
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new RuntimeException("Đơn hàng không tồn tại!"));
 
-        // Kiểm tra quyền sở hữu
         if (!order.getUser().getId().equals(currentUser.getId())) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Bạn không có quyền hủy đơn hàng này!");
         }
 
-        // Kiểm tra trạng thái đơn hàng
         if (!order.getStatus().equals(Order.OrderStatus.WAITING)) {
             return ResponseEntity.badRequest().body("Chỉ có thể hủy đơn hàng khi đang ở trạng thái chờ xác nhận!");
         }
 
-        // Cập nhật trạng thái đơn hàng
         order.setStatus(Order.OrderStatus.CANCELLED);
 
-        // Khôi phục số lượng tồn kho
         List<OrderDetail> orderDetails = orderDetailRepository.findByOrder(order);
         for (OrderDetail od : orderDetails) {
             Product product = productRepository.findById(od.getProductId())
@@ -460,7 +504,6 @@ public class UserServiceImpl implements UserService {
         return ResponseEntity.ok("Hủy đơn hàng thành công và tồn kho đã được khôi phục!");
     }
 
-    // Helper method để chuyển đổi Order thành OrderResponseDTO
     private OrderResponseDTO mapToOrderResponseDTO(Order order) {
         return OrderResponseDTO.builder()
                 .id(order.getId())
@@ -493,7 +536,14 @@ public class UserServiceImpl implements UserService {
         wishList.setProduct(product);
         wishListRepository.save(wishList);
 
-        return ResponseEntity.ok("Thêm vào danh sách yêu thích thành công!");
+        WishListDTO wishListDTO = new WishListDTO(
+                product.getId(),
+                product.getProductName(),
+                product.getImage(),
+                product.getDescription(),
+                product.getUnitPrice()
+        );
+        return ResponseEntity.ok(wishListDTO);
     }
 
     @Override
@@ -509,16 +559,86 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
-    public List<WishListDTO> getUserWishList() {
+    public WishListResponseDTO getUserWishList(int page, int size) {
         Users currentUser = getCurrentUser();
-        List<WishList> wishLists = wishListRepository.findByUser(currentUser);
+        Pageable pageable = PageRequest.of(page, size);
+        Page<WishList> wishListPage = wishListRepository.findByUser(currentUser, pageable);
 
-        return wishLists.stream().map(wishList -> new WishListDTO(
-                wishList.getProduct().getId(),
-                wishList.getProduct().getProductName(),
-                wishList.getProduct().getImage(),
-                wishList.getProduct().getDescription(),
-                wishList.getProduct().getUnitPrice()
-        )).collect(Collectors.toList());
+        List<WishListDTO> content = wishListPage.getContent().stream()
+                .map(wishList -> new WishListDTO(
+                        wishList.getProduct().getId(),
+                        wishList.getProduct().getProductName(),
+                        wishList.getProduct().getImage(),
+                        wishList.getProduct().getDescription(),
+                        wishList.getProduct().getUnitPrice()
+                ))
+                .collect(Collectors.toList());
+
+        return WishListResponseDTO.builder()
+                .content(content)
+                .page(wishListPage.getNumber())
+                .size(wishListPage.getSize())
+                .totalElements(wishListPage.getTotalElements())
+                .totalPages(wishListPage.getTotalPages())
+                .build();
+    }
+
+    //=======================PayPal=========================
+
+    @Override
+    @Transactional
+    public ResponseEntity<?> completePaypalPayment(String paymentId, String payerId, Long orderId) {
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new RuntimeException("Đơn hàng không tồn tại!"));
+
+        if (!order.getStatus().equals(Order.OrderStatus.WAITING)) {
+            return ResponseEntity.badRequest()
+                    .body("Đơn hàng không ở trạng thái chờ thanh toán!");
+        }
+
+        try {
+            Payment payment = payPalService.executePayment(paymentId, payerId);
+            if ("approved".equals(payment.getState())) {
+                order.setStatus(Order.OrderStatus.CONFIRMED);
+                orderRepository.save(order);
+                return ResponseEntity.ok("Thanh toán thành công! Đơn hàng #" + order.getSerialNumber() + " đã được xác nhận.");
+            } else {
+                return ResponseEntity.badRequest()
+                        .body("Thanh toán không được phê duyệt!");
+            }
+        } catch (PayPalRESTException e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Lỗi khi hoàn tất thanh toán: " + e.getMessage());
+        }
+    }
+
+    @Override
+    @Transactional
+    public ResponseEntity<?> cancelPaypalPayment(Long orderId) {
+        Users currentUser = getCurrentUser();
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new RuntimeException("Đơn hàng không tồn tại!"));
+
+        if (!order.getUser().getId().equals(currentUser.getId())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body("Bạn không có quyền hủy thanh toán cho đơn hàng này!");
+        }
+
+        if (!order.getStatus().equals(Order.OrderStatus.WAITING)) {
+            return ResponseEntity.badRequest()
+                    .body("Đơn hàng không ở trạng thái chờ thanh toán!");
+        }
+
+        order.setStatus(Order.OrderStatus.CANCELLED);
+        List<OrderDetail> orderDetails = orderDetailRepository.findByOrder(order);
+        for (OrderDetail od : orderDetails) {
+            Product product = productRepository.findById(od.getProductId()).orElse(null);
+            if (product != null) {
+                product.setStockQuantity(product.getStockQuantity() + od.getOrderQuantity());
+                productRepository.save(product);
+            }
+        }
+        orderRepository.save(order);
+        return ResponseEntity.ok("Đã hủy thanh toán cho đơn hàng #" + order.getSerialNumber());
     }
 }

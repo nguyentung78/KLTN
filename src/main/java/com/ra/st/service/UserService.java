@@ -34,5 +34,9 @@ public interface UserService {
     // WISHLIST
     ResponseEntity<?> addToWishList(Long productId);
     ResponseEntity<?> removeFromWishList(Long productId);
-    List<WishListDTO> getUserWishList();
+    WishListResponseDTO getUserWishList(int page, int size);
+
+    //PayPal
+    ResponseEntity<?> completePaypalPayment(String paymentId, String payerId, Long orderId);
+    ResponseEntity<?> cancelPaypalPayment(Long orderId);
 }

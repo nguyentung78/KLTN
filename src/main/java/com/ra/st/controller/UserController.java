@@ -1,15 +1,21 @@
 package com.ra.st.controller;
 
 import com.ra.st.model.dto.*;
+import com.ra.st.model.entity.WishList;
+import com.ra.st.repository.WishListRepository;
 import com.ra.st.service.UserService;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/user")
@@ -17,6 +23,8 @@ public class UserController {
 
     @Autowired
     private UserService userService;
+    @Autowired
+    private WishListRepository wishListRepository;
 
     //=======================CART=========================
 
@@ -55,7 +63,18 @@ public class UserController {
     public ResponseEntity<?> checkout(@RequestBody CheckoutRequestDTO request) {
         return userService.checkout(request);
     }
+    @GetMapping("/cart/checkout/success")
+    public ResponseEntity<?> completePaypalPayment(
+            @RequestParam("paymentId") String paymentId,
+            @RequestParam("PayerID") String payerId,
+            @RequestParam("orderId") Long orderId) {
+        return userService.completePaypalPayment(paymentId, payerId, orderId);
+    }
 
+    @GetMapping("/cart/checkout/cancel")
+    public ResponseEntity<?> cancelPaypalPayment(@RequestParam("orderId") Long orderId) {
+        return userService.cancelPaypalPayment(orderId);
+    }
     //=======================ACCOUNT=========================
 
     // Lấy thông tin tài khoản người dùng
@@ -67,22 +86,10 @@ public class UserController {
     // Cập nhật thông tin cá nhân
     @PutMapping(value = "/account", consumes = { MediaType.MULTIPART_FORM_DATA_VALUE })
     public ResponseEntity<?> updateUserProfile(
-            @RequestParam(value = "username", required = false) String username,
-            @RequestParam(value = "email", required = false) String email,
-            @RequestParam(value = "fullname", required = false) String fullname,
-            @RequestParam(value = "phone", required = false) String phone,
-            @RequestParam(value = "address", required = false) String address,
-            @RequestParam(value = "avatar", required = false) MultipartFile avatar) {
-
-        UserProfileUpdateDTO request = new UserProfileUpdateDTO();
-        request.setUsername(username);
-        request.setEmail(email);
-        request.setFullname(fullname);
-        request.setPhone(phone);
-        request.setAddress(address);
-        request.setAvatar(avatar);
-
-        return userService.updateUserProfile(request);
+            @ModelAttribute UserProfileUpdateDTO userProfileUpdateDTO
+    )
+    {
+        return userService.updateUserProfile(userProfileUpdateDTO);
     }
 
     // Đổi mật khẩu
@@ -145,8 +152,10 @@ public class UserController {
 
     // Lấy danh sách sản phẩm yêu thích
     @GetMapping("/wish-list")
-    public ResponseEntity<List<WishListDTO>> getWishList() {
-        return ResponseEntity.ok(userService.getUserWishList());
+    public ResponseEntity<WishListResponseDTO> getWishList(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        return ResponseEntity.ok(userService.getUserWishList(page, size));
     }
 
     // Thêm sản phẩm vào danh sách yêu thích
