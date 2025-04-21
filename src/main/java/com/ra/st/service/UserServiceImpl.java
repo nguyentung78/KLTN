@@ -591,6 +591,12 @@ public class UserServiceImpl implements UserService {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new RuntimeException("Đơn hàng không tồn tại!"));
 
+        // Nếu trạng thái đã là CONFIRMED, trả về thông báo thành công mà không cần xử lý lại
+        if (order.getStatus().equals(Order.OrderStatus.CONFIRMED)) {
+            return ResponseEntity.ok("Thanh toán thành công đơn hàng #" + order.getSerialNumber());
+        }
+
+        // Kiểm tra trạng thái WAITING để xử lý thanh toán
         if (!order.getStatus().equals(Order.OrderStatus.WAITING)) {
             return ResponseEntity.badRequest()
                     .body("Đơn hàng không ở trạng thái chờ thanh toán!");

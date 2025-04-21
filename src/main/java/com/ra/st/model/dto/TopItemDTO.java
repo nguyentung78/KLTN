@@ -10,6 +10,6 @@ import java.math.BigDecimal;
 @Setter
 @Builder
 public class TopItemDTO {
-    private String name; // Tên sản phẩm, khách hàng, hoặc danh mục
-    private BigDecimal value; // Số lượng bán ra, doanh thu, hoặc số lượng yêu thích
+    private String name;
+    private BigDecimal value;
 }

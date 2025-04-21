@@ -9,6 +9,7 @@ import com.ra.st.security.UserPrinciple;
 import com.ra.st.security.jwt.JwtProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.authentication.AuthenticationProvider;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -31,8 +32,14 @@ public class AuthServiceImp implements AuthService {
     private UserRepository userRepository;
     @Autowired
     private UploadService uploadService;
+
     @Override
     public UserLoginResponse login(UserLoginRequestDTO userLoginRequestDTO) {
+        // Kiểm tra xem username có tồn tại không
+        if (userRepository.findUserByUsername(userLoginRequestDTO.getUsername()) == null) {
+            throw new BadCredentialsException("Tên đăng nhập hoặc mật khẩu không đúng!");
+        }
+
         Authentication authentication;
         authentication = authenticationProvider
                 .authenticate(
@@ -102,5 +109,4 @@ public class AuthServiceImp implements AuthService {
                 .roles(roleDTOs)
                 .build();
     }
-
 }
