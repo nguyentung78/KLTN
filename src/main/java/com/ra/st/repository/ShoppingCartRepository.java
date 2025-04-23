@@ -18,4 +18,7 @@ public interface ShoppingCartRepository extends JpaRepository<ShoppingCart, Long
 
     // Xóa toàn bộ giỏ hàng của user
     void deleteByUser(Users user);
+
+    // Xóa tất cả các mục trong giỏ hàng liên quan đến một sản phẩm
+    void deleteByProduct(Product product);
 }

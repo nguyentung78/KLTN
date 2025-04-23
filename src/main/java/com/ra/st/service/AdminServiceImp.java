@@ -58,6 +58,9 @@ public class AdminServiceImp implements AdminService {
 
     @Autowired
     private OrderDetailRepository orderDetailRepository;
+
+    @Autowired
+    private ShoppingCartRepository shoppingCartRepository;
     //=======================REVIEW=========================
     @Override
     public Page<ProductReviewSummaryDTO> getProductsWithAverageRating(int page, int size, String sortBy, String order, String keyword) {
@@ -511,6 +514,9 @@ public class AdminServiceImp implements AdminService {
         Product product = productRepository.findById(productId)
                 .orElseThrow(() -> new RuntimeException("Sản phẩm không tồn tại!"));
 
+        // Xóa các mục trong giỏ hàng liên quan đến sản phẩm
+        shoppingCartRepository.deleteByProduct(product);
+
         // Tìm tất cả các đơn hàng có trạng thái WAITING
         List<Order> waitingOrders = orderRepository.findByStatus(Order.OrderStatus.WAITING);
         for (Order order : waitingOrders) {
@@ -526,7 +532,7 @@ public class AdminServiceImp implements AdminService {
 
         // Xóa sản phẩm
         productRepository.delete(product);
-        return ResponseEntity.ok("Xóa sản phẩm thành công! Các đơn hàng liên quan (nếu có) đã được hủy.");
+        return ResponseEntity.ok("Xóa sản phẩm thành công! Các mục trong giỏ hàng và đơn hàng liên quan (nếu có) đã được xử lý.");
     }
 
     //=======================ORDERS=========================

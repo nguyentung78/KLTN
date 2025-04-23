@@ -185,9 +185,13 @@ public class AdminController {
             @RequestParam(value = "unitPrice", required = false) BigDecimal unitPrice,
             @RequestParam(value = "stockQuantity", required = false) Integer stockQuantity,
             @RequestParam(value = "categoryId", required = false) Long categoryId,
-            @RequestParam(value = "image", required = false) MultipartFile image) {
+            @RequestParam(value = "image", required = false) MultipartFile image,
+            @RequestParam(value = "featured", required = false) Boolean featured
+    )
+
+    {
         if (productName == null && description == null && unitPrice == null
-                && stockQuantity == null && categoryId == null && image == null) {
+                && stockQuantity == null && categoryId == null && image == null && featured == null) {
             return ResponseEntity.badRequest().body("Không có dữ liệu để cập nhật!");
         }
         ProductRequestDTO productRequest = ProductRequestDTO.builder()
@@ -197,6 +201,7 @@ public class AdminController {
                 .stockQuantity(stockQuantity)
                 .categoryId(categoryId)
                 .image(image)
+                .featured(featured)
                 .build();
 
         return adminService.updateProduct(productId, productRequest);
