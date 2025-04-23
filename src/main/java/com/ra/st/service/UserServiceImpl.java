@@ -5,6 +5,9 @@ import com.paypal.base.rest.PayPalRESTException;
 import com.ra.st.model.dto.*;
 import com.ra.st.model.entity.*;
 import com.ra.st.repository.*;
+import com.ra.st.security.UserPrinciple;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -22,6 +25,7 @@ import java.util.stream.Collectors;
 
 @Service
 public class UserServiceImpl implements UserService {
+    private static final Logger logger = LoggerFactory.getLogger(UserServiceImpl.class);
 
     @Autowired
     private ShoppingCartRepository shoppingCartRepository;
@@ -35,6 +39,8 @@ public class UserServiceImpl implements UserService {
     private OrderDetailRepository orderDetailRepository;
     @Autowired
     private AddressRepository addressRepository;
+    @Autowired
+    private ReviewRepository reviewRepository;
     @Autowired
     private PasswordEncoder passwordEncoder;
     @Autowired
@@ -71,7 +77,6 @@ public class UserServiceImpl implements UserService {
             return ResponseEntity.badRequest().body("Số lượng phải lớn hơn 0!");
         }
 
-        // Kiểm tra stockQuantity
         if (product.getStockQuantity() < request.getQuantity()) {
             return ResponseEntity.badRequest().body("Sản phẩm " + product.getProductName() + " không đủ hàng! Còn lại: " + product.getStockQuantity());
         }
@@ -449,12 +454,22 @@ public class UserServiceImpl implements UserService {
 
         List<OrderDetail> orderDetails = orderDetailRepository.findByOrder(order);
         List<OrderItemDTO> items = orderDetails.stream()
-                .map(item -> new OrderItemDTO(
-                        item.getProductId(),
-                        item.getName(),
-                        item.getUnitPrice(),
-                        item.getOrderQuantity()
-                ))
+                .map(item -> {
+                    // Lấy productId từ OrderDetail
+                    Long productId = item.getProductId();
+                    // Lấy Product từ productRepository để kiểm tra isReviewed
+                    Product product = productRepository.findById(productId)
+                            .orElseThrow(() -> new RuntimeException("Sản phẩm không tồn tại!"));
+                    // Kiểm tra xem sản phẩm đã được đánh giá bởi người dùng chưa
+                    boolean isReviewed = reviewRepository.existsByUserAndProduct(currentUser, product);
+                    return new OrderItemDTO(
+                            productId,
+                            item.getName(),
+                            item.getUnitPrice(),
+                            item.getOrderQuantity(),
+                            isReviewed
+                    );
+                })
                 .collect(Collectors.toList());
 
         return OrderDetailResponseDTO.builder()
@@ -591,12 +606,10 @@ public class UserServiceImpl implements UserService {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new RuntimeException("Đơn hàng không tồn tại!"));
 
-        // Nếu trạng thái đã là CONFIRMED, trả về thông báo thành công mà không cần xử lý lại
         if (order.getStatus().equals(Order.OrderStatus.CONFIRMED)) {
             return ResponseEntity.ok("Thanh toán thành công đơn hàng #" + order.getSerialNumber());
         }
 
-        // Kiểm tra trạng thái WAITING để xử lý thanh toán
         if (!order.getStatus().equals(Order.OrderStatus.WAITING)) {
             return ResponseEntity.badRequest()
                     .body("Đơn hàng không ở trạng thái chờ thanh toán!");
@@ -646,5 +659,60 @@ public class UserServiceImpl implements UserService {
         }
         orderRepository.save(order);
         return ResponseEntity.ok("Đã hủy thanh toán cho đơn hàng #" + order.getSerialNumber());
+    }
+
+    //=======================REVIEW=========================
+
+    @Override
+    @Transactional
+    public ResponseEntity<?> submitReview(Long productId, ReviewRequestDTO reviewRequest) {
+        // Lấy người dùng hiện tại từ Security Context
+        Users user = ((UserPrinciple) SecurityContextHolder.getContext().getAuthentication().getPrincipal()).getUser();
+
+        // Kiểm tra sản phẩm tồn tại
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new RuntimeException("Sản phẩm không tồn tại!"));
+
+        // Kiểm tra người dùng đã mua và nhận sản phẩm (đơn hàng ở trạng thái DELIVERED)
+        boolean hasPurchasedAndDelivered = orderRepository.existsByUserAndProductIdAndStatus(user, productId, Order.OrderStatus.DELIVERED);
+        if (!hasPurchasedAndDelivered) {
+            return ResponseEntity.badRequest().body("Bạn chỉ có thể đánh giá sản phẩm đã mua và nhận!");
+        }
+
+        // Kiểm tra dữ liệu đầu vào
+        if (reviewRequest.getRating() < 1 || reviewRequest.getRating() > 5) {
+            return ResponseEntity.badRequest().body("Điểm đánh giá phải từ 1 đến 5!");
+        }
+        if (reviewRequest.getComment() == null || reviewRequest.getComment().trim().isEmpty()) {
+            return ResponseEntity.badRequest().body("Nội dung đánh giá không được để trống!");
+        }
+
+        // Kiểm tra xem người dùng đã đánh giá sản phẩm này chưa
+        if (reviewRepository.existsByUserAndProduct(user, product)) {
+            return ResponseEntity.badRequest().body("Bạn đã đánh giá sản phẩm này trước đó!");
+        }
+
+        // Tạo và lưu đánh giá
+        Review review = Review.builder()
+                .user(user)
+                .product(product)
+                .rating(reviewRequest.getRating())
+                .comment(reviewRequest.getComment())
+                .createdAt(new Date())
+                .build();
+
+        Review savedReview = reviewRepository.save(review);
+
+        // Chuẩn hóa phản hồi
+        ReviewResponseDTO responseDTO = ReviewResponseDTO.builder()
+                .id(savedReview.getId())
+                .username(user.getUsername())
+                .rating(savedReview.getRating())
+                .comment(savedReview.getComment())
+                .createdAt(savedReview.getCreatedAt())
+                .replies(new ArrayList<>())
+                .build();
+
+        return ResponseEntity.ok(responseDTO);
     }
 }

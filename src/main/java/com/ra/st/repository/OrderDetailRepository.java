@@ -11,9 +11,6 @@ import java.util.List;
 
 public interface OrderDetailRepository extends JpaRepository<OrderDetail, OrderDetailKey> {
 
-    // ✅ Lấy danh sách chi tiết đơn hàng theo Order
+    //Lấy danh sách chi tiết đơn hàng theo Order
     List<OrderDetail> findByOrder(Order order);
-
-    // ✅ Lấy danh sách chi tiết đơn hàng theo orderId
-
 }

@@ -24,7 +24,22 @@ public class AdminController {
 
     @Autowired
     private AdminService adminService;
-
+    //=======================REVIEW=========================
+    @GetMapping("/reviews/products")
+    public ResponseEntity<Page<ProductReviewSummaryDTO>> getProductsWithAverageRating(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size,
+            @RequestParam(defaultValue = "id") String sortBy,
+            @RequestParam(defaultValue = "asc") String order,
+            @RequestParam(required = false) String keyword) {
+        return ResponseEntity.ok(adminService.getProductsWithAverageRating(page, size, sortBy, order, keyword));
+    }
+    @PostMapping("/reviews/{reviewId}/reply")
+    public ResponseEntity<?> replyToReview(
+            @PathVariable Long reviewId,
+            @RequestBody @Valid ReplyRequestDTO replyRequest) {
+        return adminService.replyToReview(reviewId, replyRequest.getReply());
+    }
     //=======================USER=========================
 
     // Lấy danh sách người dùng (phân trang, sắp xếp)

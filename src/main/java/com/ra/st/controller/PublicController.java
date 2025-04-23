@@ -2,6 +2,7 @@ package com.ra.st.controller;
 
 import com.ra.st.model.dto.CategoryResponseDTO;
 import com.ra.st.model.dto.ProductResponseDTO;
+import com.ra.st.model.dto.ReviewResponseDTO;
 import com.ra.st.service.PublicService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -15,6 +16,18 @@ public class PublicController {
     @Autowired
     private PublicService publicService;
 
+    @GetMapping("/products/{productId}/reviews")
+    public Page<ReviewResponseDTO> getReviewsByProduct(
+            @PathVariable Long productId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "5") int size) {
+        return publicService.getReviewsByProduct(productId, page, size);
+    }
+
+    @GetMapping("/products/{productId}/average-rating")
+    public ResponseEntity<?> getAverageRatingByProduct(@PathVariable Long productId) {
+        return publicService.getAverageRatingByProduct(productId);
+    }
     // Danh sách danh mục được bán
     @GetMapping("/categories")
     public ResponseEntity<?> getAllCategories() {

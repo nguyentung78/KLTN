@@ -40,4 +40,7 @@ public interface AdminService {
     ResponseEntity<ReportResponseDTO> getTopSpendingCustomers();
     ResponseEntity<ReportResponseDTO> getNewAccountsThisMonth();
     ResponseEntity<ReportResponseDTO> getInvoicesOverTime(ReportRequestDTO request);
+
+    ResponseEntity<?> replyToReview(Long reviewId, String reply);
+    Page<ProductReviewSummaryDTO> getProductsWithAverageRating(int page, int size, String sortBy, String order, String keyword);
 }

@@ -39,4 +39,8 @@ public interface UserService {
     //PayPal
     ResponseEntity<?> completePaypalPayment(String paymentId, String payerId, Long orderId);
     ResponseEntity<?> cancelPaypalPayment(Long orderId);
+
+    //REVIEW
+    ResponseEntity<?> submitReview(Long productId, ReviewRequestDTO reviewRequest);
+
 }

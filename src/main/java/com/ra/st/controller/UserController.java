@@ -26,6 +26,14 @@ public class UserController {
     @Autowired
     private WishListRepository wishListRepository;
 
+    //=======================REVIEW=========================
+
+    @PostMapping("/products/{productId}/reviews")
+    public ResponseEntity<?> submitReview(
+            @PathVariable Long productId,
+            @Valid @RequestBody ReviewRequestDTO reviewRequest) {
+        return userService.submitReview(productId, reviewRequest);
+    }
     //=======================CART=========================
 
     // Lấy danh sách sản phẩm trong giỏ hàng

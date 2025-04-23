@@ -3,6 +3,7 @@ package com.ra.st.repository;
 import com.ra.st.model.entity.Order;
 import com.ra.st.model.entity.Product;
 import com.ra.st.model.entity.Users;
+import org.springframework.data.domain.Page;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.domain.Pageable;
@@ -75,4 +76,17 @@ public interface ReportRepository extends JpaRepository<Order, Long> {
             "FROM Users u " +
             "WHERE MONTH(u.createdAt) = MONTH(CURRENT_DATE) AND YEAR(u.createdAt) = YEAR(CURRENT_DATE)")
     List<Object[]> getNewAccountListThisMonth(Pageable pageable);
+
+    @Query("SELECT p.id, p.productName, AVG(r.rating), COUNT(r.id) " +
+            "FROM Product p " +
+            "LEFT JOIN Review r ON r.product.id = p.id " +
+            "GROUP BY p.id, p.productName")
+    Page<Object[]> getProductsWithAverageRating(Pageable pageable);
+
+    @Query("SELECT p.id, p.productName, AVG(r.rating), COUNT(r.id) " +
+            "FROM Product p " +
+            "LEFT JOIN Review r ON r.product.id = p.id " +
+            "WHERE p.productName LIKE %:keyword% " +
+            "GROUP BY p.id, p.productName")
+    Page<Object[]> searchProductsWithAverageRating(@Param("keyword") String keyword, Pageable pageable);
 }

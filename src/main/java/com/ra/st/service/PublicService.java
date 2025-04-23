@@ -2,6 +2,7 @@ package com.ra.st.service;
 
 import com.ra.st.model.dto.CategoryResponseDTO;
 import com.ra.st.model.dto.ProductResponseDTO;
+import com.ra.st.model.dto.ReviewResponseDTO;
 import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
 
@@ -14,4 +15,6 @@ public interface PublicService {
     ResponseEntity<?> getBestSellerProducts();
     ResponseEntity<?> getProductsByCategory(Long categoryId);
     ResponseEntity<?> getProductById(Long productId);
+    Page<ReviewResponseDTO> getReviewsByProduct(Long productId, int page, int size);
+    ResponseEntity<?> getAverageRatingByProduct(Long productId);
 }

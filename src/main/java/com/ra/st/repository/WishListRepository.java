@@ -13,12 +13,12 @@ import java.util.Optional;
 public interface WishListRepository extends JpaRepository<WishList, Long> {
     @EntityGraph(attributePaths = {"product"})
     Page<WishList> findByUser(Users user, Pageable pageable);
-    // ✅ Lấy danh sách sản phẩm yêu thích của người dùng
+    // Lấy danh sách sản phẩm yêu thích của người dùng
     List<WishList> findByUser(Users user);
 
-    // ✅ Kiểm tra sản phẩm đã có trong danh sách yêu thích chưa
+    // Kiểm tra sản phẩm đã có trong danh sách yêu thích chưa
     Optional<WishList> findByUserAndProductId(Users user, Long productId);
 
-    // ✅ Xóa sản phẩm khỏi danh sách yêu thích
+    // Xóa sản phẩm khỏi danh sách yêu thích
     void deleteByUserAndProductId(Users user, Long productId);
 }

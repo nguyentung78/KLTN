@@ -17,4 +17,6 @@ public class ProductResponseDTO {
     private String image;
     private CategoryResponseDTO category;
     private Boolean featured;
+    private Double averageRating;
+    private Long reviewCount;
 }

@@ -3,6 +3,7 @@ package com.ra.st.service;
 import com.ra.st.model.dto.*;
 import com.ra.st.model.entity.*;
 import com.ra.st.repository.*;
+import com.ra.st.security.UserPrinciple;
 import jakarta.transaction.Transactional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,6 +14,8 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -45,10 +48,75 @@ public class AdminServiceImp implements AdminService {
     private OrderRepository orderRepository;
 
     @Autowired
+    private ReviewRepository reviewRepository;
+
+    @Autowired
+    private ReviewReplyRepository reviewReplyRepository;
+
+    @Autowired
     private ReportRepository reportRepository;
 
     @Autowired
     private OrderDetailRepository orderDetailRepository;
+    //=======================REVIEW=========================
+    @Override
+    public Page<ProductReviewSummaryDTO> getProductsWithAverageRating(int page, int size, String sortBy, String order, String keyword) {
+        Sort.Direction direction = order.equalsIgnoreCase("desc") ? Sort.Direction.DESC : Sort.Direction.ASC;
+        Pageable pageable = PageRequest.of(page, size, Sort.by(direction, sortBy));
+        Page<Object[]> productSummaries;
+
+        if (keyword == null || keyword.trim().isEmpty()) {
+            productSummaries = reportRepository.getProductsWithAverageRating(pageable);
+        } else {
+            productSummaries = reportRepository.searchProductsWithAverageRating(keyword, pageable);
+        }
+
+        return productSummaries.map(result -> new ProductReviewSummaryDTO(
+                ((Number) result[0]).longValue(), // productId
+                (String) result[1], // productName
+                result[2] != null ? ((Number) result[2]).doubleValue() : 0.0, // averageRating
+                ((Number) result[3]).longValue() // reviewCount
+        ));
+    }
+    @Override
+    @Transactional
+    public ResponseEntity<?> replyToReview(Long reviewId, String reply) {
+        // Kiểm tra đánh giá tồn tại
+        Review review = reviewRepository.findById(reviewId)
+                .orElseThrow(() -> new RuntimeException("Đánh giá không tồn tại!"));
+
+        // Kiểm tra nội dung phản hồi
+        if (reply == null || reply.trim().isEmpty()) {
+            return ResponseEntity.badRequest().body("Phản hồi không được để trống!");
+        }
+
+        // Lấy thông tin người dùng hiện tại từ Security Context
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Vui lòng đăng nhập để thực hiện hành động này!");
+        }
+
+        // Lấy UserPrinciple từ authentication
+        UserPrinciple userPrinciple = (UserPrinciple) authentication.getPrincipal();
+        Users currentUser = userPrinciple.getUser();
+
+        // Kiểm tra vai trò ADMIN
+        boolean isAdmin = currentUser.getRoles().stream()
+                .anyMatch(role -> role.getRoleName() == Role.RoleName.ADMIN);
+        if (!isAdmin) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Chỉ admin mới có thể trả lời đánh giá!");
+        }
+
+        // Tạo phản hồi đánh giá
+        ReviewReply reviewReply = new ReviewReply();
+        reviewReply.setReview(review);
+        reviewReply.setAdmin(currentUser); // Sử dụng admin hiện tại
+        reviewReply.setReply(reply);
+        reviewReply.setCreatedAt(new Date()); // Thêm thời gian tạo nếu cần
+        reviewReplyRepository.save(reviewReply);
+
+        return ResponseEntity.ok("Phản hồi đánh giá thành công!");
+    }
 
     //=======================USER=========================
     @Override
@@ -520,12 +588,12 @@ public class AdminServiceImp implements AdminService {
         // Lấy danh sách chi tiết đơn hàng
         List<OrderDetail> orderDetails = orderDetailRepository.findByOrder(order);
         List<OrderItemDTO> items = orderDetails.stream()
-                .map(item -> new OrderItemDTO(
-                        item.getProductId(),
-                        item.getName(),
-                        item.getUnitPrice(),
-                        item.getOrderQuantity()
-                ))
+                .map(item -> OrderItemDTO.builder()
+                        .productId(item.getProductId())
+                        .productName(item.getName())
+                        .unitPrice(item.getUnitPrice())
+                        .orderQuantity(item.getOrderQuantity())
+                        .build()) // Không cần truyền isReviewed
                 .collect(Collectors.toList());
 
         return OrderResponseDTO.builder()
@@ -626,8 +694,8 @@ public class AdminServiceImp implements AdminService {
         List<Object[]> topProducts = reportRepository.getBestSellerProducts(pageable);
         List<TopItemDTO> topItems = topProducts.stream()
                 .map(result -> new TopItemDTO(
-                        (String) result[1], // productName
-                        BigDecimal.valueOf(((Number) result[2]).longValue()) // totalSold
+                        (String) result[0], // productName
+                        BigDecimal.valueOf(((Number) result[1]).longValue()) // totalSold
                 ))
                 .collect(Collectors.toList());
         return ResponseEntity.ok(ReportResponseDTO.builder().topItems(topItems).build());
