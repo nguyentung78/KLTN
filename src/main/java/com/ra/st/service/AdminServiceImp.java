@@ -356,7 +356,6 @@ public class AdminServiceImp implements AdminService {
     @Override
     public ResponseEntity<?> getAllProducts(int page, int size, String sortBy, String order) {
 
-
         Sort sort = order.equalsIgnoreCase("asc") ? Sort.by(sortBy).ascending() : Sort.by(sortBy).descending();
         Pageable pageable = PageRequest.of(page, size, sort);
         Page<Product> products = productRepository.findAll(pageable);
@@ -430,7 +429,6 @@ public class AdminServiceImp implements AdminService {
             return ResponseEntity.badRequest().body("Danh mục không được để trống");
         }
 
-        // Logic hiện tại...
         if (productRepository.existsByProductName(productRequest.getProductName())) {
             return ResponseEntity.badRequest().body("Sản phẩm đã tồn tại!");
         }
